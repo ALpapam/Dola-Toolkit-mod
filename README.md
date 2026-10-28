@@ -1087,3 +1087,20 @@ Worker 需要独立文件 + 正确的 MIME，`dola-mod://` 下 worker 加载没�
 ## 许可
 
 MIT，见 [`LICENSE`](LICENSE)。示例插件与文档都可以随意复制进你自己的插件。
+
+
+## 附：WebDAV 备份字段（0.3.2 起）
+
+清单里声明这两个字段后，插件会出现在「设置 → 同步内容」的列表中：
+
+```json
+{
+  "backupFile": "my-mod/state.json",
+  "backupLabel": "示例工具的偏好与历史记录"
+}
+```
+
+- `backupFile` 相对 `<userData>` 目录，必须是 JSON 文件；远端保存为 `dola-mod-<id>.json`
+- `backupLabel` 是给用户看的说明，会显示在同步列表的「名称」列 —— **请写清楚里面是什么数据**，
+  用户需要知道哪些内容会被上传
+- 备份只上传，不会自动下载恢复

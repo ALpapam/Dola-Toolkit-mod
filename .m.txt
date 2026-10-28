@@ -1,0 +1,7 @@
+docs: document backupFile / backupLabel (host 0.3.2)
+
+A tool can opt into WebDAV backup by declaring `backupFile` (a JSON path relative to the
+user data directory) and `backupLabel` (the human description shown in the 同步内容 list).
+The remote copy is stored as `dola-mod-<id>.json`; backup is upload-only.
+
+Also syncs the host API reference after the icon-default, version-parsing and CSP fixes.
