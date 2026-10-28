@@ -1,0 +1,10 @@
+docs: sync host API reference (0.3.1 corrections)
+
+Adds docs/mod-api.md straight from the host repository, and records the contract fixes
+that came out of building this hub:
+
+- the default icon is now `apps` (was `extension`, which is not in the symbol set and
+  silently rendered the `info` fallback)
+- `version` must end after the numeric/pre-release segments ("1.0.0junk" is rejected)
+- `connect-src` now allows dola-mod:, so a mod may fetch static files from its own
+  folder
