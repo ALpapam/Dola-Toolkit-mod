@@ -1,0 +1,11 @@
+{
+  "id": "hello",
+  "name": "示例工具",
+  "version": "1.0.0",
+  "settingsName": "示例工具设置",
+  "createdAt": "2026-10-28T00:00:00.000Z",
+  "description": "Dola Toolkit 插件开发指南配套的最小可运行示例。\n\n主界面演示宿主 UI 组件、toast、useApp 与快捷键；「设置 → 工具 → 示例工具 → 设置」里有一个由 mountSettings 渲染的二级设置页。",
+  "icon": "sparkle",
+  "settingsIcon": "tune",
+  "entry": "index.js"
+}

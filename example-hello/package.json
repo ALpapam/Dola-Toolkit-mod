@@ -1,0 +1,19 @@
+{
+  "name": "dola-mod-hello",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Dola Toolkit 最小插件示例（id: hello）",
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "watch": "vite build --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "pack": "node ../scripts/pack.mjs hello"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.2",
+    "@types/react-dom": "^19.0.2",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.4"
+  }
+}
