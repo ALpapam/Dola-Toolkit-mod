@@ -17,6 +17,24 @@
 
 ---
 
+## 0. 给 AI agent 的契约速查（TL;DR）
+
+如果你（或你的 agent）只读一段，读这段：
+
+- 插件 = 一个 `.zip`，**根目录**平铺 `dola-mod.json` + `index.js`；不要带 `src/`、`node_modules/`。
+- 清单必填 `id` / `name` / `version`；`id`（`[a-zA-Z0-9._-]`）同时是安装目录名，**必须**等于注册表的 key。
+- `index.js` 必须是 **IIFE**，运行时执行：
+  `(window.__DOLA_MODS__ ??= {})['<id>'] = { mount(container) {...}, mountSettings(container) {...} }`
+- `mount` / `mountSettings` **同步**返回卸载函数；`container` 是宿主给的 `HTMLElement`。
+- **不要打包 react / react-dom**：用 `vite.config.ts` 的 4 个精确别名指向 `src/shims/*`，从 `window.__DOLA__` 取宿主实例。
+- 界面用 `window.__DOLA__.ui.*`（20 个组件，见 4.2）；toast 用 `__DOLA__.toast`；宿主状态用 `__DOLA__.useApp`；系统能力用 `window.api.*`。
+- 不写死颜色和尺寸：用宿主 CSS 变量（`--md-*`、`--sp-*`、`--shape-*`）和全局类（`.page`、`.page-body`、`.set-card`、`SettingRow`）。
+- 升级规则：同 `id` 重新导入即覆盖；**低版本会被拒**；版本按数字段比较（`1.0.0-beta == 1.0.0`）。
+- 构建：`vite build`（`lib.formats: ['iife']`）→ `dist/index.js`；打包：`node scripts/pack.mjs <id>` → `mods/<id>-<version>.zip`。
+- 运行期拿不到 Node（`contextIsolation: true`，无 `fs`/`require`）；`fetch('dola-mod://…')` 被 CSP `connect-src` 拦住，数据要打进 bundle。
+
+---
+
 ## 目录
 
 1. [五分钟跑起来](#1-五分钟跑起来)
