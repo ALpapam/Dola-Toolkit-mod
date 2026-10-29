@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { ProxyState } from '@shared/types'
-import { Button, Dialog, Spinner } from './host'
+import { Button, Dialog, Spinner, proxyApi } from './host'
 import { Icon } from './host'
 import { toast } from './host'
 import { fmtBytes, fmtDate } from './host'
@@ -21,7 +21,7 @@ export function GeoDialog({
   const doImport = async (): Promise<void> => {
     setBusy('import')
     try {
-      await window.api.proxy.importGeo()
+      await proxyApi.importGeo()
       toast.success('路由文件已导入')
       onChanged()
     } catch (e) {
@@ -34,7 +34,7 @@ export function GeoDialog({
   const doUpdate = async (): Promise<void> => {
     setBusy('update')
     try {
-      await window.api.proxy.updateGeo()
+      await proxyApi.updateGeo()
       toast.success('路由文件已更新')
       onChanged()
     } catch (e) {

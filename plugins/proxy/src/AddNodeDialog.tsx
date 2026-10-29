@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { CoreId, EngineCapability, NodeDraft, NodeProtocol, ProxyNode, TransportKind } from '@shared/types'
-import { Button, Dialog, Field, IconButton, Select, Switch, TextInput } from './host'
+import { Button, Dialog, Field, IconButton, Select, Switch, TextInput, proxyApi } from './host'
 import { Icon } from './host'
 import { toast } from './host'
 import { engineLabel } from './host'
@@ -114,7 +114,7 @@ export function AddNodeDialog({ open, onClose, engines, defaultEngine, editing, 
     }
     setSaving(true)
     try {
-      await window.api.proxy.saveNode(editing ? { ...draft, id: editing.id } : draft)
+      await proxyApi.saveNode(editing ? { ...draft, id: editing.id } : draft)
       toast.success('节点已保存')
       onSaved()
     } catch (e) {

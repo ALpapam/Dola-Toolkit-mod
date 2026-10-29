@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Button, Dialog, TextArea } from './host'
+import { Button, Dialog, TextArea, proxyApi } from './host'
 import { toast } from './host'
 
 export function ImportDialog({
@@ -21,7 +21,7 @@ export function ImportDialog({
     }
     setBusy(true)
     try {
-      const res = await window.api.proxy.importLinks(text)
+      const res = await proxyApi.importLinks(text)
       if (res.added.length) toast.success(`成功导入 ${res.added.length} 个节点`)
       if (res.failed.length) toast.warn(`${res.failed.length} 行未能解析：${res.failed[0].reason}`)
       if (!res.added.length && !res.failed.length) toast.info('没有可导入的内容')

@@ -85,3 +85,35 @@ export {
   fmtDuration,
   formatProtocol
 } from './format'
+/* ------------------------------------------------------------------ */
+/* Proxy service bridge                                                */
+/*                                                                     */
+/* The feature's main-process half is a mod service now, reached through */
+/* the host's generic `window.api.mod` bridge instead of a bespoke      */
+/* `window.api.proxy` namespace. Keeping the same method names here     */
+/* means the UI did not have to change shape.                           */
+/* ------------------------------------------------------------------ */
+
+const MOD_ID = 'proxy'
+
+function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
+  return window.api.mod.invoke<T>(MOD_ID, channel, ...args)
+}
+
+export const proxyApi = {
+  state: () => invoke('state'),
+  engines: () => invoke('engines'),
+  saveNode: (node: unknown) => invoke('save-node', node),
+  deleteNode: (id: string) => invoke('delete-node', id),
+  importLinks: (text: string) => invoke('import-links', text),
+  selectNode: (id: string | null) => invoke('select-node', id),
+  start: () => invoke('start'),
+  stop: () => invoke('stop'),
+  testNode: (id: string) => invoke('test-node', id),
+  setSystemProxy: (on: boolean) => invoke('system-proxy', on),
+  importGeo: () => invoke('import-geo'),
+  updateGeo: () => invoke('update-geo'),
+  clearLogs: (engine: string) => invoke('clear-logs', engine),
+  onState: (cb: (s: unknown) => void) => window.api.mod.on(MOD_ID, 'state-changed', cb),
+  onLog: (cb: (e: unknown) => void) => window.api.mod.on(MOD_ID, 'log', cb)
+}

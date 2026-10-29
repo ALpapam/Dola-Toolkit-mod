@@ -1,17 +1,14 @@
-chore: house all plugin sources here (plugins/library, plugins/proxy, plugins/testshell)
+feat(proxy): 1.1.0 ships its own main-process service
 
-The application repository no longer carries plugin code — it only ships the shell. This
-repo is now the home for both the sources and the built packages:
+The proxy feature no longer runs inside the application: config generation, core
+lifecycle, node store access, geo handling and system-proxy control all live here now,
+exposed through the host's generic `mod:invoke` bridge.
 
-  plugins/<name>/   source, independently buildable
-  mods/             built .zip packages ready to install
+  plugins/proxy/main/       main-process half (config.ts, manager.ts, handlers)
+  plugins/proxy/vite.main.config.ts   builds it to CJS at dist/main/index.js
+  plugins/proxy/src/        UI, now calling its own service via window.api.mod
 
-Added:
-  · plugins/proxy   — the proxy plugin. Its UI is the renderer half; `main/` holds the
-                      main-process half (config generation + core lifecycle) that was
-                      extracted out of the app in the same change set. The main bundle
-                      has no build target yet, so treat `main/` as work in progress.
-  · plugins/library — 书库 (was only in the app tree)
-  · plugins/testshell — the placeholder bundle behind Test1…Test10
+The package zip contains dola-mod.json, index.js and main/index.js; the app loads the
+service on install, so no restart is needed.
 
-README gained a layout section and the exact build command for a single plugin.
+README documents the `register(dola)` contract and the host API it receives.

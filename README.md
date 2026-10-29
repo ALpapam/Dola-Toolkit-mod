@@ -1132,3 +1132,40 @@ node <dola-toolkit>/node_modules/vite/bin/vite.js build --config plugins/proxy/v
 
 > `example-hello` 与各 `plugins/*` 的 `vite.config.ts` 都是同一套：IIFE 输出、React 走宿主桥
 > 的 shim、`@shared` 指向主程序的共享类型。
+
+---
+
+## 主进程插件服务（0.5.0 起）
+
+插件除了界面，还可以带一份**主进程代码**：`main/index.js`。主程序在启动时（以及插件安装后立即）加载它，界面通过通用桥 `window.api.mod` 调用。
+
+```
+window.api.mod.invoke('proxy', 'state')            // 调主进程服务
+window.api.mod.on('proxy', 'state-changed', cb)    // 订阅广播
+```
+
+插件主进程 bundle 需要导出 `register(dola)`：
+
+```js
+exports.register = (dola) => {
+  dola.ipc.handle('state', () => ({ … }))       // → mod:proxy:state
+  dola.ipc.broadcast('state-changed', payload)   // → 界面收到事件
+  dola.on('boot', () => { /* 自动启动等 */ })
+  dola.on('quit', () => { /* 清理进程、恢复系统设置 */ })
+}
+```
+
+`dola` 提供的能力：
+
+| 字段 | 说明 |
+| --- | --- |
+| `ipc.handle / broadcast` | 注册处理器、向界面广播 |
+| `on('boot' \| 'quit')` | 生命周期 |
+| `settings.get/patch` | 应用设置 |
+| `store.get/patch` | 代理节点存储（由主程序持有，升级不丢节点） |
+| `cores.*` | 内核二进制查找、地理库路径、版本探测 |
+| `windows.*` | 窗口访问 |
+| `dataDir` | 插件自己的数据目录 |
+
+构建方式见 `plugins/proxy/vite.main.config.ts`（CJS 输出，Electron 与 Node 内建模块 external），
+打包时把 `main/index.js` 一并放进 zip 根目录下的 `main/`。

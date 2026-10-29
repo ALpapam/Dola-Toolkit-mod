@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { CoreId, CoreLogEvent, EngineCapability, NodeTestResult, ProxyNode, ProxyState } from '@shared/types'
-import { Button, Empty, IconButton, Badge, Chip, Spinner, Switch } from './host'
+import { Button, Empty, IconButton, Badge, Chip, Spinner, Switch, proxyApi } from './host'
 import { Icon } from './host'
 import { toast } from './host'
 import { engineLabel, fmtDuration, formatProtocol } from './host'
@@ -28,7 +28,7 @@ export function ProxyPage(): JSX.Element {
 
   const load = useCallback(async () => {
     try {
-      const s = await window.api.proxy.state()
+      const s = await proxyApi.state()
       setState(s)
     } catch {
       /* ignore */
@@ -37,11 +37,11 @@ export function ProxyPage(): JSX.Element {
 
   useEffect(() => {
     void load()
-    void window.api.proxy.engines().then(setEngines).catch(() => undefined)
-    const offState = window.api.proxy.onState(setState)
-    const offLog = window.api.proxy.onLog((e) => setLogs((prev) => [...prev.slice(-399), e]))
+    void proxyApi.engines().then(setEngines).catch(() => undefined)
+    const offState = proxyApi.onState(setState)
+    const offLog = proxyApi.onLog((e) => setLogs((prev) => [...prev.slice(-399), e]))
     const t = setInterval(() => {
-      void window.api.proxy.state().then(setState).catch(() => undefined)
+      void proxyApi.state().then(setState).catch(() => undefined)
     }, 3000)
     return () => {
       offState()
@@ -81,7 +81,7 @@ export function ProxyPage(): JSX.Element {
   const start = async (): Promise<void> => {
     setBusy(true)
     try {
-      const st = await window.api.proxy.start()
+      const st = await proxyApi.start()
       await load()
       if (st.error) toast.error(st.error)
       else toast.success(`${engineLabel(st.engine)} 已启动 · 混合端口 ${st.mixedPort}`)
@@ -95,7 +95,7 @@ export function ProxyPage(): JSX.Element {
   const stop = async (): Promise<void> => {
     setBusy(true)
     try {
-      await window.api.proxy.stop()
+      await proxyApi.stop()
       await load()
       toast.info('代理已停止')
     } catch (e) {
@@ -106,14 +106,14 @@ export function ProxyPage(): JSX.Element {
   }
 
   const selectNode = async (id: string): Promise<void> => {
-    const s = await window.api.proxy.selectNode(id)
+    const s = await proxyApi.selectNode(id)
     setState(s)
   }
 
   const testNode = async (id: string): Promise<void> => {
     setTesting((t) => ({ ...t, [id]: true }))
     try {
-      const r = await window.api.proxy.testNode(id)
+      const r = await proxyApi.testNode(id)
       setResults((prev) => ({ ...prev, [id]: r }))
       if (r.ok) toast.success(`${r.delayMs ?? '?'} ms${r.exitIp ? ` · ${r.exitIp}` : ''}`)
       else toast.error(r.error ?? '测试失败')
@@ -126,13 +126,13 @@ export function ProxyPage(): JSX.Element {
 
   const removeNode = async (n: ProxyNode): Promise<void> => {
     if (!confirm(`确定删除节点「${n.name}」？`)) return
-    await window.api.proxy.deleteNode(n.id)
+    await proxyApi.deleteNode(n.id)
     await load()
     toast.info('已删除')
   }
 
   const toggleSystemProxy = async (on: boolean): Promise<void> => {
-    await window.api.proxy.setSystemProxy(on)
+    await proxyApi.setSystemProxy(on)
     await load()
   }
 
@@ -460,7 +460,7 @@ export function ProxyPage(): JSX.Element {
                 label="清空"
                 onClick={() => {
                   setLogs([])
-                  void window.api.proxy.clearLogs(state.activeEngine)
+                  void proxyApi.clearLogs(state.activeEngine)
                 }}
               />
             </div>
