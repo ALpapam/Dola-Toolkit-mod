@@ -1,0 +1,17 @@
+chore: house all plugin sources here (plugins/library, plugins/proxy, plugins/testshell)
+
+The application repository no longer carries plugin code — it only ships the shell. This
+repo is now the home for both the sources and the built packages:
+
+  plugins/<name>/   source, independently buildable
+  mods/             built .zip packages ready to install
+
+Added:
+  · plugins/proxy   — the proxy plugin. Its UI is the renderer half; `main/` holds the
+                      main-process half (config generation + core lifecycle) that was
+                      extracted out of the app in the same change set. The main bundle
+                      has no build target yet, so treat `main/` as work in progress.
+  · plugins/library — 书库 (was only in the app tree)
+  · plugins/testshell — the placeholder bundle behind Test1…Test10
+
+README gained a layout section and the exact build command for a single plugin.

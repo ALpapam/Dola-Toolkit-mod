@@ -1104,3 +1104,31 @@ MIT，见 [`LICENSE`](LICENSE)。示例插件与文档都可以随意复制进�
 - `backupLabel` 是给用户看的说明，会显示在同步列表的「名称」列 —— **请写清楚里面是什么数据**，
   用户需要知道哪些内容会被上传
 - 备份只上传，不会自动下载恢复
+
+---
+
+## 本仓库结构
+
+```
+plugins/           各插件的源码（每个目录都可独立构建）
+  library/         书库（EPUB / PDF / FB2 / MOBI / TXT / RTF 阅读器）
+  proxy/           代理（Xray / sing-box / Mihomo 多内核）
+  testshell/       测试空壳（一个 bundle 通过脚本 URL 识别自身 id，可打出 Test1…Test10）
+mods/              已构建好的插件包（.zip），可直接安装
+docs/mod-api.md    宿主接口参考
+example-hello/     最小可运行示例
+scripts/pack.mjs   打包脚本
+```
+
+### 从源码构建某个插件
+
+```powershell
+# 复用主程序的 node_modules，避免单独安装依赖
+New-Item -ItemType Junction -Path example-hello\node_modules -Target <dola-toolkit>\node_modules
+node <dola-toolkit>/node_modules/vite/bin/vite.js build --config plugins/proxy/vite.config.ts
+```
+
+产物在 `plugins/<name>/dist/index.js`，再和 `dola-mod.json` 一起打成 zip（根目录两个文件）。
+
+> `example-hello` 与各 `plugins/*` 的 `vite.config.ts` 都是同一套：IIFE 输出、React 走宿主桥
+> 的 shim、`@shared` 指向主程序的共享类型。
