@@ -117,3 +117,15 @@ export const proxyApi = {
   onState: (cb: (s: unknown) => void) => window.api.mod.on(MOD_ID, 'state-changed', cb),
   onLog: (cb: (e: unknown) => void) => window.api.mod.on(MOD_ID, 'log', cb)
 }
+
+/* ---- core updates: the plugin owns these too ---- */
+
+export const coreUpdateApi = {
+  check: () => invoke('check-core-updates'),
+  stageCore: (engine: string) => invoke('stage-core', engine),
+  stageAll: () => invoke('stage-all-cores'),
+  staged: () => invoke('staged-cores'),
+  clearStaged: () => invoke('clear-staged'),
+  applyStaged: () => invoke('apply-staged'),
+  onProgress: (cb: (p: unknown) => void) => window.api.mod.on(MOD_ID, 'update-progress', cb)
+}

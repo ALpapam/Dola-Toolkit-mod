@@ -11,7 +11,7 @@
 
 import { useEffect, useState } from 'react'
 import type { CoreUpdateInfo, StagedCoreInfo } from '@shared/types'
-import { Button, Dialog, Spinner } from './host'
+import { Button, Dialog, Spinner , coreUpdateApi } from './host'
 import { Icon } from './host'
 import { toast } from './host'
 
@@ -34,8 +34,8 @@ export function CoreUpdateDialog({ open, onClose, onFinished }: Props): JSX.Elem
 
   const refresh = async (): Promise<void> => {
     const [list, pending] = await Promise.all([
-      window.api.app.checkCoreUpdates(),
-      window.api.app.stagedCores()
+      coreUpdateApi.check(),
+      coreUpdateApi.staged()
     ])
     setCores(list)
     setStaged(pending)
@@ -50,7 +50,7 @@ export function CoreUpdateDialog({ open, onClose, onFinished }: Props): JSX.Elem
     setProgress({})
     setRestarting(false)
     void refresh()
-    const off = window.api.app.onUpdateProgress((p) => {
+    const off = coreUpdateApi.onProgress((p) => {
       if (p.kind !== 'core' || !p.engine) return
       const engine = p.engine
       setProgress((prev) => {
@@ -67,7 +67,7 @@ export function CoreUpdateDialog({ open, onClose, onFinished }: Props): JSX.Elem
     setBusy(engine)
     setFailure(null)
     try {
-      const res = await window.api.app.stageCore(engine)
+      const res = await coreUpdateApi.stageCore(engine)
       if (!res.ok) {
         // nothing was staged, so no restart is offered — only a retry
         setFailure({ engine, error: res.error ?? '下载失败' })
@@ -86,7 +86,7 @@ export function CoreUpdateDialog({ open, onClose, onFinished }: Props): JSX.Elem
     setAllBusy(true)
     setFailure(null)
     try {
-      const res = await window.api.app.stageAllCores()
+      const res = await coreUpdateApi.stageAll()
       if (res.staged.length > 0) toast.success(`${res.staged.length} 个内核已下载并校验通过`)
       if (res.failed.length > 0) {
         setFailure({
@@ -105,7 +105,7 @@ export function CoreUpdateDialog({ open, onClose, onFinished }: Props): JSX.Elem
   const applyNow = async (): Promise<void> => {
     setRestarting(true)
     toast.info('正在重启应用以应用内核更新…')
-    const res = await window.api.app.applyStagedNow()
+    const res = await coreUpdateApi.applyStaged()
     if (!res.ok) {
       setRestarting(false)
       toast.error(res.error ?? '重启失败')
@@ -113,7 +113,7 @@ export function CoreUpdateDialog({ open, onClose, onFinished }: Props): JSX.Elem
   }
 
   const discard = async (): Promise<void> => {
-    await window.api.app.clearStagedCores()
+    await coreUpdateApi.clearStaged()
     toast.info('已丢弃待应用的内核')
     await refresh()
   }

@@ -1,0 +1,14 @@
+feat(proxy): 1.2.0 — the plugin now owns core updates too
+
+Everything proxy-related left the application: core binary lookup, geo assets, version
+checks, SHA-256 verified downloads, staging and the restart-time swap. The shell keeps
+only its own updater.
+
+Two host capabilities were added to make that possible: `dola.fs` for file work and
+`dola.app.relaunch`, which lets a plugin stop its own processes and restart the app.
+
+Fixes that came out with the migration:
+  · plugin main bundles are reloaded on update (require + cache eviction; the base has to
+    be the app root, since __filename resolves to <project>\electron in the bundled main)
+  · the manager imports its own binary module instead of the removed `host.cores` surface
+  · update metadata and downloads honour both the running proxy and 下载渠道
