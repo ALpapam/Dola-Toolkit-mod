@@ -1,0 +1,11 @@
+{
+  "id": "livepet",
+  "name": "桌宠",
+  "version": "1.0.0",
+  "settingsName": "桌宠设置",
+  "createdAt": "2026-11-02T00:00:00.000Z",
+  "description": "把 Live2D 模型放到桌面上当桌宠，可自由摆放，支持点击角色互动。\n\n第一次使用请在「设置 → 工具 → 桌宠 → 设置」里上传模型。",
+  "icon": "favorite",
+  "settingsIcon": "favorite",
+  "entry": "index.js"
+}

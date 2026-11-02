@@ -1169,3 +1169,37 @@ exports.register = (dola) => {
 
 构建方式见 `plugins/proxy/vite.main.config.ts`（CJS 输出，Electron 与 Node 内建模块 external），
 打包时把 `main/index.js` 一并放进 zip 根目录下的 `main/`。
+
+---
+
+## 桌面窗口能力（0.5.3 起）
+
+插件可以要一个**透明、置顶的桌面窗口**，这是桌宠这类功能的基础：
+
+```js
+const id = await dola.desktop.open({
+  modId: 'livepet',
+  page: 'pet.html',        // 插件内的页面
+  width: 380, height: 520,
+  ignoreMouse: true        // 初始鼠标穿透
+})
+dola.desktop.setIgnoreMouse(id, false)   // 指针进入角色时关闭穿透
+dola.desktop.setAlwaysOnTop(id, true)
+dola.desktop.setBounds(id, { x, y })
+dola.desktop.close(id)
+```
+
+窗口加载插件自己的页面，所以 Live2D 运行时留在插件里，主程序不需要知道任何渲染细节。
+
+插件的数据目录也走同一个协议：`dola-mod://<id>/@data/<path>` 映射到
+`<userData>/mod-data/<id>/`，适合放用户上传的模型、素材等大文件。
+
+`dola.dialog.pickDirectory(title)` 让插件可以请求文件选择框而不用自己持有 Electron dialog。
+
+### 桌宠插件
+
+`plugins/livepet/` — 用 pixi-live2d-display 渲染 Cubism 4 模型：
+
+- `src/stage.ts` —— pixi + Live2DModel 的封装，负责缩放与底部对齐
+- `src/pet.ts` —— 透明窗口页面：加载模型、上报角色包围盒、按指针位置切换点击穿透
+- `main/index.ts` —— 模型导入（自动跳过 `.cmo3`/`.psd` 等编辑器文件）、开关、尺寸

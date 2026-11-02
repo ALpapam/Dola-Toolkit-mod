@@ -1,14 +1,15 @@
-feat(proxy): 1.2.0 — the plugin now owns core updates too
+feat(livepet): 桌宠 plugin — Live2D on the desktop (1.0.0)
 
-Everything proxy-related left the application: core binary lookup, geo assets, version
-checks, SHA-256 verified downloads, staging and the restart-time swap. The shell keeps
-only its own updater.
+Renders a Cubism 4 model in the transparent desktop window the host provides.
 
-Two host capabilities were added to make that possible: `dola.fs` for file work and
-`dola.app.relaunch`, which lets a plugin stop its own processes and restart the app.
+  plugins/livepet/src/stage.ts   pixi-live2d-display wrapper: fit, bottom anchor
+  plugins/livepet/src/pet.ts     the desktop page: load, report hit box, toggle passthrough
+  plugins/livepet/main/index.ts  model import (skips .cmo3/.psd), show/hide, size, on-top
 
-Fixes that came out with the migration:
-  · plugin main bundles are reloaded on update (require + cache eviction; the base has to
-    be the app root, since __filename resolves to <project>\electron in the bundled main)
-  · the manager imports its own binary module instead of the removed `host.cores` surface
-  · update metadata and downloads honour both the running proxy and 下载渠道
+The hand-written WebGL renderer I tried first could not reproduce Cubism's mask and clip
+passes — the Core exposes vertex data but not the draw matrices — so the plugin uses the
+library that implements them. Core is loaded synchronously in pet.html because
+pixi-live2d-display inspects window.Live2DCubismCore while its module body evaluates.
+
+README documents the new host surface: dola.desktop, dola.dialog.pickDirectory and the
+dola-mod://<id>/@data/ data route.
