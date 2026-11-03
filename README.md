@@ -1258,3 +1258,34 @@ node scripts/fetch-stt-runtime.mjs --check  # 只检查
 ```bash
 node scripts/pack-livepet.mjs   # → mods/livepet-<version>.zip
 ```
+
+### 语音合成（1.3.0 起）
+
+听音的回答用**用户自己训练的 GPT-SoVITS 音色**念出来。配置放在主程序的
+「设置 → 语音合成」，插件只通过宿主能力调用：
+
+```js
+const r = await dola.tts.speak('你好，我是你的桌面伙伴。')
+// r.ok, r.audio（data URL，可直接塞给 <audio>）, r.error
+```
+
+```
+麦克风 → whisper 转写 → AI 回答 → dola.tts.speak → 广播 'voice' → 悬浮球播放
+```
+
+几个要点：
+
+1. **不要自己 fetch `127.0.0.1:9880`**。渲染层的 CSP `connect-src` 不含它，
+   而且参考音频是本地路径，只有主进程读得到。走 `dola.tts.speak`。
+2. **参考音频要绝对路径，且不能放在会被覆盖的地方**。插件安装目录每次升级都整体替换，
+   所以自带的 `ref-voice.wav` 会在首次调用 `tts-default-ref` 时复制到
+   `<dataDir>/voice/ref.wav`，再把这个稳定路径报给宿主。
+3. **合成是异步的，别阻塞文字展示**。回答先显示，语音好了再广播；插件里是
+   `void dola.tts.speak(...).then(...)`，不是 `await`。
+
+主程序侧的实现见 `src/main/tts.ts`（客户端）和 `src/main/ipc/tts.ts`（IPC）。
+
+**踩过的坑**：调试 TTS 时用 curl 传中文 query 会得到
+`'gbk' codec can't encode character` —— 那是**终端**把中文按 GBK 编码发出去了，
+服务本身没问题。用 Python 的 `urllib.parse.urlencode(..., encoding='utf-8')`
+或直接从软件里调。
