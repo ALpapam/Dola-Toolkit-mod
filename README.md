@@ -1259,31 +1259,42 @@ node scripts/fetch-stt-runtime.mjs --check  # 只检查
 node scripts/pack-livepet.mjs   # → mods/livepet-<version>.zip
 ```
 
-### 语音合成（1.3.0 起）
+### 语音合成（1.4.0 起：配置归插件）
 
-听音的回答用**用户自己训练的 GPT-SoVITS 音色**念出来。配置放在主程序的
-「设置 → 语音合成」，插件只通过宿主能力调用：
+听音的回答用**用户自己训练的 GPT-SoVITS 音色**念出来。
 
-```js
-const r = await dola.tts.speak('你好，我是你的桌面伙伴。')
-// r.ok, r.audio（data URL，可直接塞给 <audio>）, r.error
-```
+**重要：TTS 的配置在插件里，不在主程序里。** 0.5.7 起宿主删掉了
+`Settings.tts`、`window.api.tts` 和 `dola.tts` —— 一个只有单个插件用到的能力，
+没有理由长在宿主上。想用语音的插件复制 `plugins/livepet/main/tts.ts` 即可。
 
 ```
-麦克风 → whisper 转写 → AI 回答 → dola.tts.speak → 广播 'voice' → 悬浮球播放
+麦克风 → whisper 转写 → AI 回答（带记忆）→ TtsEngine.speak → 广播 'voice' → 悬浮球播放
 ```
 
 几个要点：
 
-1. **不要自己 fetch `127.0.0.1:9880`**。渲染层的 CSP `connect-src` 不含它，
-   而且参考音频是本地路径，只有主进程读得到。走 `dola.tts.speak`。
+1. **请求必须在主进程发**。渲染层的 CSP `connect-src` 不含 `127.0.0.1:9880`，
+   而且参考音频是本地路径，只有主进程读得到。
 2. **参考音频要绝对路径，且不能放在会被覆盖的地方**。插件安装目录每次升级都整体替换，
-   所以自带的 `ref-voice.wav` 会在首次调用 `tts-default-ref` 时复制到
-   `<dataDir>/voice/ref.wav`，再把这个稳定路径报给宿主。
-3. **合成是异步的，别阻塞文字展示**。回答先显示，语音好了再广播；插件里是
-   `void dola.tts.speak(...).then(...)`，不是 `await`。
+   所以自带的 `ref-voice.wav` 由 `installBundledReference()` 复制到
+   `<dataDir>/voice/ref.wav`，之后一直用这个稳定路径。
+   实测**中文路径也能用**，不需要转成 ASCII。
+3. **合成是异步的，别阻塞文字展示**。回答先显示，语音好了再广播；
+   `void tts.speak(...).then(...)`，不是 `await`。
+4. **单段文字不要超过 400 字**。GPT-SoVITS 对长文本容易返回垃圾，`clampText()`
+   会在句子边界截断。
 
-主程序侧的实现见 `src/main/tts.ts`（客户端）和 `src/main/ipc/tts.ts`（IPC）。
+### 对话记忆（1.4.0 起）
+
+`main/memory.ts` 记住最近对话，**40 轮 / 6000 字**双重上限（长句子不该因为条数
+够就无限增长）。只把最后 8 条发给模型：更早的上下文会让回答跑偏，而且每次请求都要付 token。
+
+```js
+memory.push({ role: 'user', text: heard, source: 'voice' })
+memory.contextMessages()   // → [{role:'user'|'assistant', content}]
+```
+
+存储是插件数据目录里的 `chat.json`，和主程序无关。
 
 **踩过的坑**：调试 TTS 时用 curl 传中文 query 会得到
 `'gbk' codec can't encode character` —— 那是**终端**把中文按 GBK 编码发出去了，
