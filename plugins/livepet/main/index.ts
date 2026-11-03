@@ -242,9 +242,116 @@ export function register(dola: ModHostApi): void {
 
   dola.ipc.handle('list-windows', () => dola.desktop.list())
 
+  /* ---- 悬浮球 ---- */
+
+  let orbWindow: string | null = null
+  let orbExpanded = false
+
+  const openOrb = async (): Promise<string> => {
+    if (orbWindow) return orbWindow
+    orbWindow = await dola.desktop.open({
+      modId: 'livepet',
+      page: 'orb.html',
+      // sized for the expanded row (grip + 4 buttons); the page keeps the disc centred
+      width: 240,
+      height: 60,
+      // the ball must be clickable, so no passthrough
+      ignoreMouse: false,
+      alwaysOnTop: true
+    })
+    // enforce the declared size: a reused window id can keep stale bounds, and DPI
+    // rounding can grow it
+    dola.desktop.setBounds(orbWindow, { width: 240, height: 60 })
+    return orbWindow
+  }
+
+  const closeOrb = (): void => {
+    if (orbWindow) {
+      dola.desktop.close(orbWindow)
+      orbWindow = null
+    }
+  }
+
+  dola.ipc.handle('orb-show', async () => {
+    if (orbWindow) return { ok: true }
+    await openOrb()
+    return { ok: true }
+  })
+
+  dola.ipc.handle('orb-hide', () => {
+    closeOrb()
+    return { ok: true }
+  })
+
+  dola.ipc.handle('orb-state', () => ({ expanded: orbExpanded, showing: Boolean(orbWindow) }))
+
+  dola.ipc.handle('orb-expanded', (on: unknown) => {
+    orbExpanded = Boolean(on)
+    save()
+    return { ok: true }
+  })
+
+  dola.ipc.handle('orb-window', () =>
+    dola.desktop
+      .list()
+      .filter((w) => w.id === orbWindow)
+      .map((w) => ({ id: w.id, bounds: w.bounds }))
+  )
+
+  dola.ipc.handle('orb-move', (pos: unknown) => {
+    if (!orbWindow || !pos || typeof pos !== 'object') return { ok: false }
+    const p = pos as { x: number; y: number }
+    dola.desktop.setBounds(orbWindow, { x: p.x, y: p.y })
+    return { ok: true }
+  })
+
+  dola.ipc.handle('orb-open-settings', () => {
+    // bring the main window forward and land on this plugin's settings page
+    const win = dola.windows.main()
+    if (win) {
+      win.show()
+      win.focus()
+    }
+    return { ok: true }
+  })
+
+  /** The four orb buttons. Vision / STT / chat all route through the app's AI settings. */
+  dola.ipc.handle('orb-action', async (action: unknown) => {
+    const kind = String(action)
+    try {
+      if (kind === 'vision') {
+        const shot = await captureScreen()
+        if (!shot) return { ok: false, error: '无法截屏' }
+        const res = await dola.ai.chat([
+          { role: 'system', content: '你是一个桌面助手，请用简短中文描述这张屏幕截图的内容与当前用户在做什么。' },
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: '请描述这张截图。' },
+              { type: 'image_url', image_url: { url: shot } }
+            ]
+          }
+        ])
+        return res.ok ? { ok: true, text: res.content } : { ok: false, error: res.error }
+      }
+      if (kind === 'chat') {
+        const res = await dola.ai.chat([{ role: 'user', content: '你好，用一句话介绍你自己。' }])
+        return res.ok ? { ok: true, text: res.content } : { ok: false, error: res.error }
+      }
+      if (kind === 'listen') {
+        return { ok: false, error: '语音识别尚未启用（下一版接入本地 whisper）' }
+      }
+      return { ok: false, error: `未知操作：${kind}` }
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : '操作失败' }
+    }
+  })
+
   /* ---- lifecycle ---- */
 
   dola.on('boot', async () => {
+    // the orb comes back with the pet, since it is how the pet is operated
+    void openOrb().catch(() => undefined)
     // a pet that was open when the app closed comes back
     if (!state.modelFile) return
     try {
@@ -255,9 +362,34 @@ export function register(dola: ModHostApi): void {
   })
 
   dola.on('quit', () => {
+    closeOrb()
     if (state.windowId) dola.desktop.close(state.windowId)
     state.windowId = null
   })
+}
+
+/**
+ * Captures the primary display as a PNG data URL.
+ *
+ * `desktopCapturer` is a main-process API; the renderer cannot reach the screen without
+ * a permission prompt, so the screenshot for 识屏 is taken here.
+ */
+async function captureScreen(): Promise<string | null> {
+  try {
+    const { desktopCapturer, screen } = await import('electron')
+    const display = screen.getPrimaryDisplay()
+    const { width, height } = display.size
+    const scale = display.scaleFactor || 1
+    const sources = await desktopCapturer.getSources({
+      types: ['screen'],
+      thumbnailSize: { width: Math.round(width * scale), height: Math.round(height * scale) }
+    })
+    const source = sources[0]
+    if (!source) return null
+    return source.thumbnail.toDataURL()
+  } catch {
+    return null
+  }
 }
 
 export type { PetState }

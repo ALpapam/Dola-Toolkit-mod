@@ -1,15 +1,9 @@
-feat(livepet): 桌宠 plugin — Live2D on the desktop (1.0.0)
+feat(livepet): 1.1.0 — 悬浮球 with vision / listen / chat / settings
 
-Renders a Cubism 4 model in the transparent desktop window the host provides.
+The ball that operates the pet: a 240x60 desktop window holding a collapsed 44px disc that
+expands into grip / 识屏 / 听音 / 聊天 / 设置. It is dragged through the host so it never
+takes focus from the desktop.
 
-  plugins/livepet/src/stage.ts   pixi-live2d-display wrapper: fit, bottom anchor
-  plugins/livepet/src/pet.ts     the desktop page: load, report hit box, toggle passthrough
-  plugins/livepet/main/index.ts  model import (skips .cmo3/.psd), show/hide, size, on-top
-
-The hand-written WebGL renderer I tried first could not reproduce Cubism's mask and clip
-passes — the Core exposes vertex data but not the draw matrices — so the plugin uses the
-library that implements them. Core is loaded synchronously in pet.html because
-pixi-live2d-display inspects window.Live2DCubismCore while its module body evaluates.
-
-README documents the new host surface: dola.desktop, dola.dialog.pickDirectory and the
-dola-mod://<id>/@data/ data route.
+识屏 and 聊天 go through the app's AI settings — the plugin asks the host (`dola.ai`) rather
+than owning a key, and the screenshot is captured with desktopCapturer in the main process.
+听音 is a stub until a local STT engine is available.
