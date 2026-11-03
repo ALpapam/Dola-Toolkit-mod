@@ -39,7 +39,12 @@ export default defineConfig({
   },
   build: {
     outDir: resolve(modRoot, 'dist'),
-    emptyOutDir: true,
+    /*
+     * This config writes dist/index.js, but dist/ also holds the sibling builds
+     * (dist/main, dist/pet, dist/orb). `emptyOutDir: true` would wipe them, and the order
+     * the four configs run in is not fixed — so only this bundle's own file is replaced.
+     */
+    emptyOutDir: false,
     copyPublicDir: false,
     target: 'esnext',
     // The distributable is a single index.js, so any asset a dependency pulls

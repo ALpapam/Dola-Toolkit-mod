@@ -1165,7 +1165,17 @@ exports.register = (dola) => {
 | `store.get/patch` | 代理节点存储（由主程序持有，升级不丢节点） |
 | `cores.*` | 内核二进制查找、地理库路径、版本探测 |
 | `windows.*` | 窗口访问 |
-| `dataDir` | 插件自己的数据目录 |
+| `dataDir` | 插件自己的数据目录（用户数据，升级后保留） |
+| `installDir` | 插件自己的**安装目录**（随包发布、升级时整体替换） |
+| `ai.chat / status` | 主程序配置好的 AI（多模态 content 也支持） |
+| `dialog.pickDirectory / pickFile` | 系统文件选择框 |
+| `desktop.*` | 透明置顶桌面窗口（见下文） |
+| `fs.*` | 少量文件操作 |
+| `app.relaunch / quit` | 重启（可要求重启后继续加载本插件） |
+| `log` | 写主程序日志 |
+
+`dataDir` 放用户数据（上传的模型、下载的语音模型），`installDir` 放**随包发布的资源**
+（插件自带的二进制、默认素材）——后者在升级时会被整体覆盖，不该往里写东西。
 
 构建方式见 `plugins/proxy/vite.main.config.ts`（CJS 输出，Electron 与 Node 内建模块 external），
 打包时把 `main/index.js` 一并放进 zip 根目录下的 `main/`。
@@ -1203,3 +1213,48 @@ dola.desktop.close(id)
 - `src/stage.ts` —— pixi + Live2DModel 的封装，负责缩放与底部对齐
 - `src/pet.ts` —— 透明窗口页面：加载模型、上报角色包围盒、按指针位置切换点击穿透
 - `main/index.ts` —— 模型导入（自动跳过 `.cmo3`/`.psd` 等编辑器文件）、开关、尺寸
+- `main/stt.ts` —— 本地语音识别（whisper.cpp），见下
+
+### 本地语音识别（1.2.0 起）
+
+悬浮球上的**听音**按钮不再依赖云端 STT：插件自带 whisper.cpp 的 Windows 运行时，
+语音**全部在本机识别，不出网**。
+
+```
+麦克风 → getUserMedia（悬浮球页面）
+       → 重采样成 16 kHz 单声道 WAV（页面里手写，不引依赖）
+       → base64 → 主进程写盘
+       → whisper-cli.exe（插件 stt/ 目录，cwd = 数据目录、参数用相对路径）
+       → 繁体转简体（stt/t2s.tsv，OpenCC TSCharacters）
+       → 交给主程序的 AI 配置回答
+```
+
+模型不随插件发布（59 MB），第一次用的时候下载到插件数据目录：
+
+| 模型 | 大小 | 说明 |
+| --- | --- | --- |
+| `ggml-base-q5_1.bin` | 59 MB | 默认，中文准确 |
+| `ggml-tiny-q5_1.bin` | 32 MB | 更快，个别字会错 |
+
+从 `hf-mirror.com` 下载（国内可直连），下载完成前用 `.part` 临时名，成功后原子改名。
+
+有两个坑值得记住：
+
+1. **whisper-cli 收到含非 ASCII 字符的绝对路径会崩（`0xC0000409`）**。
+   这个应用的安装目录常常是 `D:\桌面\…`，所以必须把 `cwd` 设成插件数据目录、
+   只传 `models/xxx.bin`、`audio/last.wav` 这种**相对路径**。
+2. **whisper 的中文输出经常是繁体**，而且按片段用 CRLF 分行。转简体之前要先把
+   `\r` 去掉，否则会得到 `帮\r我看看现\r在几\r点` 这种结果。
+
+二进制（`stt/*.exe`、`stt/*.dll`，12 MB）不进 git，用脚本取回：
+
+```bash
+node scripts/fetch-stt-runtime.mjs          # 下载 whisper.cpp b5454 的 x64 产物
+node scripts/fetch-stt-runtime.mjs --check  # 只检查
+```
+
+打这个插件用独立脚本（它要带页面、运行时和 `main/`，通用 `pack.mjs` 只打单个 js）：
+
+```bash
+node scripts/pack-livepet.mjs   # → mods/livepet-<version>.zip
+```

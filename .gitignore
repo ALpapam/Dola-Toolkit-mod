@@ -4,6 +4,12 @@ dist/
 .vite/
 *.tsbuildinfo
 
+# 语音识别的二进制运行时（12 MB，whisper.cpp 官方产物，用脚本取回）
+#   node scripts/fetch-stt-runtime.mjs
+plugins/livepet/stt/*.exe
+plugins/livepet/stt/*.dll
+.cache/
+
 # 打包时的临时目录
 mods/.stage-*/
 

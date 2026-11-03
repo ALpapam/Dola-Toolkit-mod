@@ -1,9 +1,0 @@
-feat(livepet): 1.1.0 — 悬浮球 with vision / listen / chat / settings
-
-The ball that operates the pet: a 240x60 desktop window holding a collapsed 44px disc that
-expands into grip / 识屏 / 听音 / 聊天 / 设置. It is dragged through the host so it never
-takes focus from the desktop.
-
-识屏 and 聊天 go through the app's AI settings — the plugin asks the host (`dola.ai`) rather
-than owning a key, and the screenshot is captured with desktopCapturer in the main process.
-听音 is a stub until a local STT engine is available.

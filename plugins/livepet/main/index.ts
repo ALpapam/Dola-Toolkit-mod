@@ -11,6 +11,7 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, dirname, extname, join, relative } from 'node:path'
 import type { ModHostApi } from '../../../src/main/modService'
+import { MODELS, SttEngine } from './stt'
 
 interface PetState {
   /** character box in window coordinates, reported by the page */
@@ -23,6 +24,8 @@ interface PetState {
   windowId: string | null
   scale: number
   alwaysOnTop: boolean
+  /** whisper model id used by 听音 */
+  sttModel: string
 }
 
 const DEFAULTS: PetState = {
@@ -31,7 +34,8 @@ const DEFAULTS: PetState = {
   modelFile: '',
   windowId: null,
   scale: 1,
-  alwaysOnTop: true
+  alwaysOnTop: true,
+  sttModel: 'base-q5'
 }
 
 /** Live2D models only reference a handful of file types; everything else is dead weight. */
@@ -41,6 +45,10 @@ export function register(dola: ModHostApi): void {
   const stateFile = join(dola.dataDir, 'pet.json')
   const modelsRoot = join(dola.dataDir, 'models')
   mkdirSync(modelsRoot, { recursive: true })
+  // recordings are scratch data: they live under the plugin's private dir and are
+  // overwritten, since the audio never needs to survive the transcription
+  const audioDir = join(dola.dataDir, 'audio')
+  mkdirSync(audioDir, { recursive: true })
 
   let state: PetState = { ...DEFAULTS }
   try {
@@ -57,6 +65,12 @@ export function register(dola: ModHostApi): void {
       /* non-fatal */
     }
   }
+
+  const stt = new SttEngine(
+    { installDir: dola.installDir, dataDir: dola.dataDir },
+    (level, msg) => dola.log(level, msg),
+    (p) => dola.ipc.broadcast('stt-progress', p)
+  )
 
   /** Copies a model folder into the plugin's data dir, keeping only referenced files. */
   const importModel = async (sourceDir: string): Promise<{ name: string; entry: string }> => {
@@ -305,6 +319,26 @@ export function register(dola: ModHostApi): void {
     return { ok: true }
   })
 
+  /**
+   * Grows / shrinks the orb window.
+   *
+   * The ball and the result panel share one window, so the page asks for a taller window
+   * when a result arrives and shrinks back when it is dismissed. The width stays fixed at
+   * the row width — resizing it would re-centre the disc and make it jump.
+   */
+  dola.ipc.handle('orb-resize', (spec: unknown) => {
+    if (!orbWindow || !spec || typeof spec !== 'object') return { ok: false }
+    const s = spec as { x?: number; y?: number; height?: number }
+    const height = Math.max(60, Math.min(720, Math.round(Number(s.height) || 60)))
+    dola.desktop.setBounds(orbWindow, {
+      ...(typeof s.x === 'number' ? { x: Math.round(s.x) } : {}),
+      ...(typeof s.y === 'number' ? { y: Math.round(s.y) } : {}),
+      width: 240,
+      height
+    })
+    return { ok: true }
+  })
+
   dola.ipc.handle('orb-open-settings', () => {
     // bring the main window forward and land on this plugin's settings page
     const win = dola.windows.main()
@@ -338,13 +372,95 @@ export function register(dola: ModHostApi): void {
         const res = await dola.ai.chat([{ role: 'user', content: '你好，用一句话介绍你自己。' }])
         return res.ok ? { ok: true, text: res.content } : { ok: false, error: res.error }
       }
-      if (kind === 'listen') {
-        return { ok: false, error: '语音识别尚未启用（下一版接入本地 whisper）' }
-      }
       return { ok: false, error: `未知操作：${kind}` }
     } catch (e) {
       return { ok: false, error: e instanceof Error ? e.message : '操作失败' }
     }
+  })
+
+  /* ---- 听音（本地 whisper） ---- */
+
+  /**
+   * The orb records from the microphone itself (only a renderer has `getUserMedia`), then
+   * posts the captured audio here as a base64 WAV. The main process writes it to disk and
+   * runs whisper-cli, so the recognition happens locally and the audio never leaves the
+   * machine.
+   */
+  dola.ipc.handle('stt-status', () => stt.status(state.sttModel))
+
+  dola.ipc.handle('stt-set-model', (id: unknown) => {
+    const model = MODELS.find((m) => m.id === String(id))
+    if (!model) return { ok: false, error: '未知模型' }
+    state.sttModel = model.id
+    save()
+    return { ok: true, modelId: model.id }
+  })
+
+  dola.ipc.handle('stt-download', async (id: unknown) => {
+    const modelId = MODELS.some((m) => m.id === String(id)) ? String(id) : state.sttModel
+    try {
+      await stt.ensureModel(modelId)
+      return { ok: true, modelId }
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : '下载失败' }
+    }
+  })
+
+  dola.ipc.handle('stt-cancel-download', () => {
+    stt.cancelDownload()
+    return { ok: true }
+  })
+
+  /**
+   * Writes the posted audio and runs whisper over it.
+   *
+   * Shared by 转写 (stt-transcribe) and 语音问答 (stt-ask) so both go through exactly the
+   * same path — including the model auto-download on first use.
+   */
+  const transcribePosted = async (
+    payload: unknown,
+    opts: unknown
+  ): Promise<{ ok: true; text: string } | { ok: false; error: string }> => {
+    const data = String(payload ?? '')
+    if (!data) return { ok: false, error: '没有收到音频' }
+    const language = typeof opts === 'object' && opts ? (opts as { language?: string }).language : undefined
+    // one rolling file: the previous request's audio is never interesting afterwards
+    const wavPath = join(audioDir, 'last.wav')
+    try {
+      writeFileSync(wavPath, Buffer.from(data, 'base64'))
+    } catch (e) {
+      return { ok: false, error: `写入音频失败：${e instanceof Error ? e.message : '未知错误'}` }
+    }
+    try {
+      return { ok: true, text: await stt.transcribe(wavPath, state.sttModel, { language }) }
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : '识别失败' }
+    }
+  }
+
+  dola.ipc.handle('stt-transcribe', async (payload: unknown, opts: unknown) => {
+    const res = await transcribePosted(payload, opts)
+    return res.ok ? { ok: true, text: res.text, modelId: state.sttModel } : res
+  })
+
+  /** 听音 = 说话 → 本地转写 → 用软件里的 AI 设置回答。 */
+  dola.ipc.handle('stt-ask', async (payload: unknown, opts: unknown) => {
+    const res = await transcribePosted(payload, opts)
+    if (!res.ok) return { ok: false, error: res.error }
+    const heard = res.text
+    if (!heard) return { ok: true, heard: '', reply: '', text: '', error: '没听清，再说一遍？' }
+
+    const status = dola.ai.status()
+    if (!status.configured) {
+      return { ok: true, heard, reply: '', text: '', error: '软件设置里还没有配置 AI，只能先给你转写结果' }
+    }
+    const chat = await dola.ai.chat([
+      { role: 'system', content: '你是一个桌面助手。用户在用语音和你说话，请用一到两句话简短回答，不要列表、不要标题。' },
+      { role: 'user', content: heard }
+    ])
+    return chat.ok
+      ? { ok: true, heard, reply: chat.content, text: chat.content }
+      : { ok: true, heard, reply: '', text: '', error: chat.error ?? 'AI 没有返回内容' }
   })
 
   /* ---- lifecycle ---- */

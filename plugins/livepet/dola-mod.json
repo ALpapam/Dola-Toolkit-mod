@@ -1,10 +1,10 @@
 {
   "id": "livepet",
   "name": "桌宠",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "settingsName": "桌宠设置",
   "createdAt": "2026-11-02T00:00:00.000Z",
-  "description": "把 Live2D 模型放到桌面上当桌宠，可自由摆放，支持点击角色互动。\n\n第一次使用请在「设置 → 工具 → 桌宠 → 设置」里上传模型。",
+  "description": "把 Live2D 模型放到桌面上当桌宠，可自由摆放，支持点击角色互动。\n\n悬浮球上可以识屏、听音、聊天：语音在本地识别（whisper.cpp），不经过网络。\n\n第一次使用请在「设置 → 工具 → 桌宠 → 设置」里上传模型，听音需要下载一次语音模型（59 MB）。",
   "icon": "favorite",
   "settingsIcon": "favorite",
   "entry": "index.js"

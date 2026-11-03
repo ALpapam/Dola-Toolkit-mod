@@ -40,6 +40,28 @@ declare global {
   }
 }
 
+/** What the mod's `state` handler reports to the UI. */
+export interface PetInfo {
+  modelDir: string
+  modelFile: string
+  showing: boolean
+  scale: number
+  alwaysOnTop: boolean
+  /** whisper model currently selected for 听音 */
+  sttModel: string
+}
+
+/** Where the bundled speech-to-text runtime stands. */
+export interface SttStatus {
+  /** whisper-cli.exe is present inside the installed plugin */
+  runtime: boolean
+  /** the model file has been downloaded */
+  model: boolean
+  modelId: string
+  /** size on disk, 0 when not downloaded */
+  bytes: number
+}
+
 function bridge(): DolaHostBridge {
   const b = window.__DOLA__
   if (!b) throw new Error('[livepet] 宿主桥未安装：window.__DOLA__ 缺失（mod 只能在 Dola Toolkit 渲染器中加载）')
