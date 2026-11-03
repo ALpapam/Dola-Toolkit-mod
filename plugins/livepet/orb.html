@@ -71,6 +71,12 @@
         color: #fff;
         animation: pulse 1.1s ease-in-out infinite;
       }
+      /* while a voice line is playing, the mic glows in the accent colour instead */
+      .btn.speaking {
+        background: rgb(199 125 255 / 70%);
+        color: #fff;
+        box-shadow: 0 0 0 2px rgb(199 125 255 / 35%);
+      }
       @keyframes pulse {
         0%, 100% { box-shadow: 0 0 0 0 rgb(214 62 78 / 55%); }
         50% { box-shadow: 0 0 0 7px rgb(214 62 78 / 0%); }

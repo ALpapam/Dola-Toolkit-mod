@@ -26,6 +26,8 @@ interface PetState {
   alwaysOnTop: boolean
   /** whisper model id used by 听音 */
   sttModel: string
+  /** read the AI's reply out loud */
+  speakReply: boolean
 }
 
 const DEFAULTS: PetState = {
@@ -35,7 +37,8 @@ const DEFAULTS: PetState = {
   windowId: null,
   scale: 1,
   alwaysOnTop: true,
-  sttModel: 'base-q5'
+  sttModel: 'base-q5',
+  speakReply: true
 }
 
 /** Live2D models only reference a handful of file types; everything else is dead weight. */
@@ -175,7 +178,10 @@ export function register(dola: ModHostApi): void {
     modelFile: state.modelFile,
     showing: Boolean(state.windowId),
     scale: state.scale,
-    alwaysOnTop: state.alwaysOnTop
+    alwaysOnTop: state.alwaysOnTop,
+    // the UI reads these back, so omitting one makes its control render as "off"
+    sttModel: state.sttModel,
+    speakReply: state.speakReply
   }))
 
   dola.ipc.handle('pick-model', async () => {
@@ -458,9 +464,71 @@ export function register(dola: ModHostApi): void {
       { role: 'system', content: '你是一个桌面助手。用户在用语音和你说话，请用一到两句话简短回答，不要列表、不要标题。' },
       { role: 'user', content: heard }
     ])
-    return chat.ok
-      ? { ok: true, heard, reply: chat.content, text: chat.content }
-      : { ok: true, heard, reply: '', text: '', error: chat.error ?? 'AI 没有返回内容' }
+    if (!chat.ok) return { ok: true, heard, reply: '', text: '', error: chat.error ?? 'AI 没有返回内容' }
+
+    /*
+     * Speak the reply right away when voice output is on.
+     *
+     * It is intentionally not awaited for the response: synthesis takes a moment, and the
+     * text should appear as soon as the model has answered. The audio is delivered as a
+     * separate broadcast that the orb plays.
+     */
+    if (state.speakReply && dola.tts.status().ready) {
+      void dola.tts
+        .speak(chat.content)
+        .then((voice) => {
+          if (voice.ok) dola.ipc.broadcast('voice', { audio: voice.audio, text: voice.text })
+          else dola.ipc.broadcast('voice-error', { error: voice.error })
+        })
+        .catch(() => undefined)
+    }
+    return { ok: true, heard, reply: chat.content, text: chat.content }
+  })
+
+  /* ---- 朗读（本地 GPT-SoVITS） ---- */
+
+  dola.ipc.handle('tts-status', () => dola.tts.status())
+
+  /** Speaks arbitrary text; the orb also calls this for the 朗读 button. */
+  dola.ipc.handle('tts-speak', async (text: unknown) => {
+    const res = await dola.tts.speak(String(text ?? ''))
+    return res
+  })
+
+  /** Replays the reference sample so the user can hear which voice is in use. */
+  dola.ipc.handle('tts-preview', async () => {
+    const status = dola.tts.status()
+    const sample = '你好，我是你的桌面伙伴。'
+    const res = await dola.tts.speak(sample)
+    return { ...res, ready: status.ready, reason: status.reason }
+  })
+
+  /**
+   * Hands the bundled reference clip to whoever needs an absolute path.
+   *
+   * GPT-SoVITS wants a real file path, and the plugin's install directory is replaced on
+   * every upgrade — so the sample is copied into the plugin's data dir once and reported
+   * from there. The settings UI uses this to pre-fill the field.
+   */
+  dola.ipc.handle('tts-default-ref', () => {
+    const bundled = join(dola.installDir, 'ref-voice.wav')
+    const stable = join(dola.dataDir, 'voice', 'ref.wav')
+    try {
+      if (!existsSync(bundled)) return { ok: false, path: null, error: '插件里没有自带参考音频' }
+      if (!existsSync(stable)) {
+        mkdirSync(join(dola.dataDir, 'voice'), { recursive: true })
+        cpSync(bundled, stable)
+      }
+      return { ok: true, path: stable }
+    } catch (e) {
+      return { ok: false, path: null, error: e instanceof Error ? e.message : '复制失败' }
+    }
+  })
+
+  dola.ipc.handle('set-speak-reply', (on: unknown) => {
+    state.speakReply = Boolean(on)
+    save()
+    return { ok: true, speakReply: state.speakReply }
   })
 
   /* ---- lifecycle ---- */

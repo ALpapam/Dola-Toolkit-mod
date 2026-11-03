@@ -51,6 +51,11 @@ const sttDir = join(src, 'stt')
 if (!existsSync(join(sttDir, 'whisper-cli.exe'))) fail(`缺少语音识别运行时：${sttDir}\\whisper-cli.exe`)
 if (!existsSync(join(sttDir, 't2s.tsv'))) fail(`缺少繁简转换表：${sttDir}\\t2s.tsv`)
 
+/** 随包发布的默认参考音频（GPT-SoVITS 音色样本），第一次使用时复制到插件数据目录。 */
+const refVoice = join(src, 'ref-voice.wav')
+if (!existsSync(refVoice)) fail(`缺少默认参考音频：${refVoice}`)
+FILES.push(['ref-voice.wav', 'ref-voice.wav'])
+
 const stage = join(repoRoot, 'mods', `.stage-livepet`)
 rmSync(stage, { recursive: true, force: true })
 mkdirSync(join(stage, 'main'), { recursive: true })
@@ -67,7 +72,18 @@ for (const name of readdirSync(sttDir)) {
 rmSync(out, { force: true })
 const tar = join(process.env['SystemRoot'] || 'C:\\Windows', 'System32', 'tar.exe')
 // -a 让 bsdtar 按扩展名选格式；显式列出条目，避免把 .stage 的空目录结构带进去
-const entries = ['dola-mod.json', 'index.js', 'main', 'pet.html', 'pet.js', 'orb.html', 'orb.js', 'cubismcore.min.js', 'stt']
+const entries = [
+  'dola-mod.json',
+  'index.js',
+  'main',
+  'pet.html',
+  'pet.js',
+  'orb.html',
+  'orb.js',
+  'cubismcore.min.js',
+  'ref-voice.wav',
+  'stt'
+]
 execFileSync(tar, ['-a', '-c', '-f', out, '-C', stage, ...entries], { stdio: 'inherit' })
 
 rmSync(stage, { recursive: true, force: true })
@@ -75,4 +91,6 @@ rmSync(stage, { recursive: true, force: true })
 const size = statSync(out).size
 console.log(`✔ livepet v${manifest.version}`)
 console.log(`  ${out}  (${(size / 1024 / 1024).toFixed(1)} MB)`)
-console.log(`  根目录：dola-mod.json, index.js, main/, pet.html, pet.js, orb.html, orb.js, cubismcore.min.js, stt/`)
+console.log(
+  '  根目录：dola-mod.json, index.js, main/, pet.html, pet.js, orb.html, orb.js, cubismcore.min.js, ref-voice.wav, stt/'
+)

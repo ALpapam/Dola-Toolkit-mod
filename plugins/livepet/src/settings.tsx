@@ -6,8 +6,8 @@
 // ---------------------------------------------------------------------------
 
 import { useEffect, useState } from 'react'
-import { Button, Icon, SettingRow, Slider, Switch, toast } from './host'
-import type { PetInfo, SttStatus } from './host'
+import { Badge, Button, Icon, SettingRow, Slider, Switch, toast } from './host'
+import type { PetInfo, SttStatus, TtsStatus } from './host'
 
 export function PetSettingsPage(): JSX.Element {
   const [info, setInfo] = useState<PetInfo | null>(null)
@@ -15,6 +15,8 @@ export function PetSettingsPage(): JSX.Element {
   const [stt, setStt] = useState<SttStatus | null>(null)
   const [downloading, setDownloading] = useState(false)
   const [progress, setProgress] = useState(0)
+  const [tts, setTts] = useState<TtsStatus | null>(null)
+  const [previewing, setPreviewing] = useState(false)
 
   const refresh = async (): Promise<void> => {
     try {
@@ -32,9 +34,18 @@ export function PetSettingsPage(): JSX.Element {
     }
   }
 
+  const refreshTts = async (): Promise<void> => {
+    try {
+      setTts(await petApi.ttsStatus())
+    } catch {
+      /* service not loaded yet */
+    }
+  }
+
   useEffect(() => {
     void refresh()
     void refreshStt()
+    void refreshTts()
     const off = window.api.mod.on('livepet', 'state-changed', () => void refresh())
     // download progress arrives as a broadcast, so the bar moves without polling
     const offProgress = window.api.mod.on('livepet', 'stt-progress', (payload) => {
@@ -60,6 +71,25 @@ export function PetSettingsPage(): JSX.Element {
       await refreshStt()
     } finally {
       setDownloading(false)
+    }
+  }
+
+  /** Speaks a fixed line so the user can hear the configured voice. */
+  const preview = async (): Promise<void> => {
+    setPreviewing(true)
+    try {
+      const res = await petApi.ttsPreview()
+      if (!res.ok) {
+        toast.error(res.error ?? '试听失败')
+        return
+      }
+      if (res.audio) {
+        const audio = new Audio(res.audio)
+        void audio.play().catch(() => toast.error('浏览器拒绝了播放，请先点一下页面'))
+      }
+    } finally {
+      setPreviewing(false)
+      await refreshTts()
     }
   }
 
@@ -216,6 +246,56 @@ export function PetSettingsPage(): JSX.Element {
           </div>
         </div>
       </div>
+
+      <h2 className="set-section-title" style={{ marginTop: 28 }}>
+        <Icon name="autoAi" size={20} /> 语音合成
+      </h2>
+      <p className="set-section-desc">
+        用你自己训练的 GPT-SoVITS 音色说话。文字在这台电脑上合成，不经过网络。
+        服务地址和参考音频都在「设置 → 语音合成」里配置，桌宠跟着用。
+      </p>
+
+      <div className="set-card">
+        <SettingRow
+          title="朗读 AI 的回复"
+          desc={info?.speakReply ? '听音回答后会自动念出来' : '只显示文字，不出声'}
+        >
+          <Switch
+            checked={Boolean(info?.speakReply)}
+            onChange={(v) => void petApi.setSpeakReply(v).then(() => refresh())}
+          />
+        </SettingRow>
+
+        <SettingRow
+          title="语音服务"
+          desc={tts?.ready ? '已就绪，可以试听' : tts?.configured ? tts.reason : '还没有配置'}
+        >
+          {tts?.ready ? (
+            <Button variant="tonal" size="sm" icon="play" loading={previewing} onClick={() => void preview()}>
+              试听
+            </Button>
+          ) : (
+            <Badge tone="warning">未配置</Badge>
+          )}
+        </SettingRow>
+      </div>
+
+      {!tts?.ready && (
+        <div className="set-card">
+          <div className="tools-format">
+            <div>
+              <div className="tools-format-title">怎么配语音</div>
+              <p className="tools-format-body">
+                到「设置 → 语音合成」填三样东西：<br />
+                1. <b>服务地址</b>：GPT-SoVITS 启动后显示的地址，默认 <code>http://127.0.0.1:9880/tts</code>；<br />
+                2. <b>参考音频</b>：一段 3~10 秒、你自己音色的 wav/flac；<br />
+                3. <b>参考音频的语言</b>：这段音频说的是中文还是日文。<br />
+                填完点「测试」确认能出声，再回来点「试听」。
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   )
 }
@@ -234,5 +314,11 @@ export const petApi = {
   sttDownload: (modelId: string) =>
     window.api.mod.invoke<{ ok: boolean; modelId?: string; error?: string }>('livepet', 'stt-download', modelId),
   sttSetModel: (modelId: string) =>
-    window.api.mod.invoke<{ ok: boolean; modelId?: string; error?: string }>('livepet', 'stt-set-model', modelId)
+    window.api.mod.invoke<{ ok: boolean; modelId?: string; error?: string }>('livepet', 'stt-set-model', modelId),
+  /* ---- 朗读 ---- */
+  ttsStatus: () => window.api.mod.invoke<TtsStatus>('livepet', 'tts-status'),
+  ttsPreview: () =>
+    window.api.mod.invoke<{ ok: boolean; audio?: string; error?: string; reason?: string }>('livepet', 'tts-preview'),
+  setSpeakReply: (on: boolean) =>
+    window.api.mod.invoke<{ ok: boolean; speakReply: boolean }>('livepet', 'set-speak-reply', on)
 }

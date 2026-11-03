@@ -33,6 +33,7 @@ const panelHeard = document.getElementById('panel-heard') as HTMLDivElement
 const panelBody = document.getElementById('panel-body') as HTMLDivElement
 const bar = document.getElementById('bar') as HTMLDivElement
 const barFill = bar.firstElementChild as HTMLElement
+const micBtn = document.querySelector<HTMLButtonElement>('.btn[data-action="listen"]') as HTMLButtonElement
 
 /** Window geometry the host keeps for us: the ball row plus room for the panel. */
 const BALL_H = 60
@@ -147,6 +148,36 @@ window.api?.mod.on(MOD, 'stt-progress', (payload) => {
   const ratio = p.ratio >= 0 ? p.ratio : Math.min(1, p.received / (p.total || 59_000_000))
   barFill.style.width = `${Math.round(ratio * 100)}%`
   if (ratio >= 1) setTimeout(() => bar.classList.remove('on'), 800)
+})
+
+/* ---- voice output ---- */
+
+/** One shared player: a new line always interrupts the previous one. */
+let player: HTMLAudioElement | null = null
+
+function playVoice(dataUrl: string): void {
+  if (!dataUrl) return
+  if (!player) {
+    player = new Audio()
+    player.addEventListener('ended', () => micBtn.classList.remove('speaking'))
+  }
+  player.pause()
+  player.src = dataUrl
+  micBtn.classList.add('speaking')
+  void player.play().catch(() => {
+    // autoplay can be refused before the user interacts; not fatal
+    micBtn.classList.remove('speaking')
+  })
+}
+
+// the main process synthesises the line and broadcasts it when it is ready
+window.api?.mod.on(MOD, 'voice', (payload) => {
+  const v = payload as { audio?: string }
+  if (v?.audio) playVoice(v.audio)
+})
+
+window.api?.mod.on(MOD, 'voice-error', () => {
+  micBtn.classList.remove('speaking')
 })
 
 /* ---- recording ---- */
@@ -273,8 +304,6 @@ function encodeWav(chunks: Float32Array[], sampleRate: number): string {
 }
 
 /* ---- actions ---- */
-
-const micBtn = document.querySelector<HTMLButtonElement>('.btn[data-action="listen"]') as HTMLButtonElement
 
 function setBusyState(busy: boolean): void {
   for (const b of document.querySelectorAll<HTMLButtonElement>('.btn[data-action]')) {

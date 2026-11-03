@@ -49,6 +49,8 @@ export interface PetInfo {
   alwaysOnTop: boolean
   /** whisper model currently selected for 听音 */
   sttModel: string
+  /** read the AI's reply out loud */
+  speakReply: boolean
 }
 
 /** Where the bundled speech-to-text runtime stands. */
@@ -60,6 +62,14 @@ export interface SttStatus {
   modelId: string
   /** size on disk, 0 when not downloaded */
   bytes: number
+}
+
+/** Whether local voice output (GPT-SoVITS) is usable. */
+export interface TtsStatus {
+  configured: boolean
+  ready: boolean
+  /** why it is not ready, in Chinese; empty when ready */
+  reason: string
 }
 
 function bridge(): DolaHostBridge {
