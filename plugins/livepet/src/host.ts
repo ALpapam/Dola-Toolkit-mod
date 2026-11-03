@@ -51,6 +51,10 @@ export interface PetInfo {
   sttModel: string
   /** read the AI's reply out loud */
   speakReply: boolean
+  /** keep the recent conversation */
+  rememberChat: boolean
+  /** voice output config (owned by this plugin) */
+  tts: TtsConfig
 }
 
 /** Where the bundled speech-to-text runtime stands. */
@@ -70,6 +74,27 @@ export interface TtsStatus {
   ready: boolean
   /** why it is not ready, in Chinese; empty when ready */
   reason: string
+  endpoint: string
+  refAudio: string
+}
+
+/** Voice config owned by the plugin (the host does not know about TTS at all). */
+export interface TtsConfig {
+  enabled: boolean
+  endpoint: string
+  refAudio: string
+  promptText: string
+  promptLang: string
+  textLang: string
+  speed: number
+  timeoutMs: number
+}
+
+/** One remembered line of conversation. */
+export interface Turn {
+  role: 'user' | 'pet'
+  text: string
+  at: number
 }
 
 function bridge(): DolaHostBridge {

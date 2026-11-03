@@ -34,6 +34,8 @@ const panelBody = document.getElementById('panel-body') as HTMLDivElement
 const bar = document.getElementById('bar') as HTMLDivElement
 const barFill = bar.firstElementChild as HTMLElement
 const micBtn = document.querySelector<HTMLButtonElement>('.btn[data-action="listen"]') as HTMLButtonElement
+const input = document.getElementById('chat-input') as HTMLInputElement
+const sendBtn = document.getElementById('chat-send') as HTMLButtonElement
 
 /** Window geometry the host keeps for us: the ball row plus room for the panel. */
 const BALL_H = 60
@@ -134,6 +136,7 @@ async function syncHeight(): Promise<void> {
 async function closePanel(): Promise<void> {
   panelOpen = false
   body.classList.remove('separate-panel')
+  body.classList.remove('chatting')
   bar.classList.remove('on')
   const b = await winBounds()
   await setWindow(b.x, b.y, BALL_H)
@@ -370,6 +373,36 @@ micBtn.addEventListener('click', async (e) => {
   }
 })
 
+/** 聊天: ask something in text, with the conversation history behind it. */
+async function askChat(): Promise<void> {
+  panelWho.textContent = '聊天'
+  panelHeard.textContent = ''
+  // turn the result panel into an input row for this one question
+  body.classList.add('chatting')
+  panelBody.textContent = ''
+  panelOpen = true
+  body.classList.add('separate-panel')
+  await syncHeight()
+  input.focus()
+}
+
+async function sendChat(): Promise<void> {
+  const text = input.value.trim()
+  if (!text) return
+  input.value = ''
+  setBusyState(true)
+  await showPanel('聊天', '正在思考…', `你说：${text}`, true)
+  try {
+    const res = await invoke<{ ok: boolean; reply?: string; text?: string; error?: string }>('chat-ask', text)
+    if (res.ok) await showPanel('聊天', res.reply ?? res.text ?? '')
+    else await showError('聊天', res.error ?? '未知错误')
+  } catch (e) {
+    await showError('聊天', e instanceof Error ? e.message : String(e))
+  } finally {
+    setBusyState(false)
+  }
+}
+
 document.querySelectorAll<HTMLButtonElement>('.btn[data-action]').forEach((btn) => {
   btn.addEventListener('click', async () => {
     const action = btn.dataset.action
@@ -378,14 +411,27 @@ document.querySelectorAll<HTMLButtonElement>('.btn[data-action]').forEach((btn) 
       await invoke('orb-open-settings')
       return
     }
+    if (action === 'chat') {
+      await askChat()
+      return
+    }
     setBusyState(true)
-    const who = action === 'vision' ? '识屏' : '聊天'
-    setHint(action === 'vision' ? '正在识屏…' : '正在思考…')
-    await showPanel(who, action === 'vision' ? '正在截屏并识别…' : '正在思考…', '', true)
+    const who = '识屏'
+    setHint('正在识屏…')
+    await showPanel(who, '正在截屏并识别…', '', true)
     try {
       const res = await invoke<{ ok: boolean; text?: string; error?: string }>('orb-action', action)
-      if (res.ok) await showPanel(who, res.text ?? '')
-      else await showError(who, res.error ?? '未知错误')
+      if (res.ok) {
+        await showPanel(who, res.text ?? '')
+        // read the description out loud too, so the pet narrates what it sees
+        const said = res.text ?? ''
+        if (said) {
+          const voice = await invoke<{ ok: boolean; audio?: string }>('tts-speak', said)
+          if (voice.ok && voice.audio) playVoice(voice.audio)
+        }
+      } else {
+        await showError(who, res.error ?? '未知错误')
+      }
       setHint('')
     } catch (e) {
       await showError(who, e instanceof Error ? e.message : String(e))
@@ -394,6 +440,18 @@ document.querySelectorAll<HTMLButtonElement>('.btn[data-action]').forEach((btn) 
     }
   })
 })
+
+/* ---- chat input wiring ---- */
+
+input.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault()
+    void sendChat()
+  }
+  // Escape closes the row without sending
+  if (e.key === 'Escape') void closePanel()
+})
+sendBtn.addEventListener('click', () => void sendChat())
 
 // the row starts collapsed; the host may ask it to remember the last state
 void (async () => {

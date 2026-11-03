@@ -206,6 +206,50 @@
         background: #c77dff;
         transition: width 180ms linear;
       }
+
+      /* the chat row only appears when the panel is used for typing */
+      .chat-row {
+        display: none;
+        gap: 6px;
+        margin-top: 8px;
+        align-items: center;
+      }
+      body.chatting .chat-row {
+        display: flex;
+      }
+      #chat-input {
+        flex: 1 1 auto;
+        min-width: 0;
+        box-sizing: border-box;
+        height: 28px;
+        padding: 0 10px;
+        border: none;
+        border-radius: 14px;
+        background: rgb(255 255 255 / 12%);
+        color: #f3e8ff;
+        font: 12px/28px "Microsoft YaHei", system-ui, sans-serif;
+        outline: none;
+      }
+      #chat-input::placeholder {
+        color: rgb(243 232 255 / 45%);
+      }
+      #chat-input:focus {
+        background: rgb(255 255 255 / 18%);
+      }
+      #chat-send {
+        flex: 0 0 auto;
+        width: 28px;
+        height: 28px;
+        border: none;
+        border-radius: 50%;
+        background: rgb(199 125 255 / 45%);
+        color: #fff;
+        font-size: 14px;
+        cursor: pointer;
+      }
+      #chat-send:hover {
+        background: rgb(199 125 255 / 70%);
+      }
     </style>
   </head>
   <body class="collapsed">
@@ -222,6 +266,10 @@
       <div class="who" id="panel-who"></div>
       <div class="heard" id="panel-heard"></div>
       <div class="body" id="panel-body"></div>
+      <div class="chat-row">
+        <input id="chat-input" placeholder="说点什么…" autocomplete="off" />
+        <button id="chat-send" title="发送">➤</button>
+      </div>
       <div id="bar"><i></i></div>
     </div>
     <script src="orb.js"></script>

@@ -12,6 +12,8 @@ import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, write
 import { basename, dirname, extname, join, relative } from 'node:path'
 import type { ModHostApi } from '../../../src/main/modService'
 import { MODELS, SttEngine } from './stt'
+import { TTS_DEFAULTS, TtsEngine, type TtsConfig } from './tts'
+import { Memory } from './memory'
 
 interface PetState {
   /** character box in window coordinates, reported by the page */
@@ -28,6 +30,10 @@ interface PetState {
   sttModel: string
   /** read the AI's reply out loud */
   speakReply: boolean
+  /** keep the last few turns so the pet remembers the conversation */
+  rememberChat: boolean
+  /** voice output config — owned here, not by the host */
+  tts: TtsConfig
 }
 
 const DEFAULTS: PetState = {
@@ -38,8 +44,23 @@ const DEFAULTS: PetState = {
   scale: 1,
   alwaysOnTop: true,
   sttModel: 'base-q5',
-  speakReply: true
+  speakReply: true,
+  rememberChat: true,
+  tts: { ...TTS_DEFAULTS }
 }
+
+/**
+ * The pet's voice, sent on every request.
+ *
+ * Kept short and concrete: a long persona prompt tends to be performed rather than
+ * followed, and every turn pays for it.
+ */
+const PET_SYSTEM_PROMPT = [
+  '你是用户电脑上的桌面伙伴，正在陪着他。',
+  '用口语化的中文回答，一到三句话，不要列表、标题、Markdown。',
+  '不要说「作为 AI」这类话；不知道的事直接说不知道。',
+  '如果用户提到上一轮聊过的事，可以自然地接上，但不要重复复述。'
+].join('')
 
 /** Live2D models only reference a handful of file types; everything else is dead weight. */
 const KEEP = new Set(['.json', '.moc3', '.png', '.jpg', '.jpeg', '.webp', '.wav', '.mp3', '.motion3.json'])
@@ -55,7 +76,12 @@ export function register(dola: ModHostApi): void {
 
   let state: PetState = { ...DEFAULTS }
   try {
-    if (existsSync(stateFile)) state = { ...DEFAULTS, ...(JSON.parse(readFileSync(stateFile, 'utf8')) as PetState) }
+    if (existsSync(stateFile)) {
+      const parsed = JSON.parse(readFileSync(stateFile, 'utf8')) as Partial<PetState>
+      // tts is an object now: a shallow merge would drop newly added keys from the file's
+      // older shape, so merge it explicitly
+      state = { ...DEFAULTS, ...parsed, tts: { ...TTS_DEFAULTS, ...(parsed.tts ?? {}) } }
+    }
   } catch {
     /* a corrupt state file just means "no model selected" */
   }
@@ -68,6 +94,21 @@ export function register(dola: ModHostApi): void {
       /* non-fatal */
     }
   }
+
+  const tts = new TtsEngine(
+    { installDir: dola.installDir, dataDir: dola.dataDir },
+    state.tts,
+    (level, msg) => dola.log(level, msg)
+  )
+  // the bundled voice is adopted before anything can ask for one
+  tts.ensureReference()
+  state.tts = tts.getConfig()
+
+  /** Chat history lives with the plugin; the host has no business reading it. */
+  const memory = new Memory(dola.dataDir, (messages) =>
+    dola.ai.chat(messages).then((r) => ({ ok: r.ok, content: r.content, error: r.error }))
+  )
+  memory.load()
 
   const stt = new SttEngine(
     { installDir: dola.installDir, dataDir: dola.dataDir },
@@ -181,7 +222,9 @@ export function register(dola: ModHostApi): void {
     alwaysOnTop: state.alwaysOnTop,
     // the UI reads these back, so omitting one makes its control render as "off"
     sttModel: state.sttModel,
-    speakReply: state.speakReply
+    speakReply: state.speakReply,
+    rememberChat: state.rememberChat,
+    tts: tts.getConfig()
   }))
 
   dola.ipc.handle('pick-model', async () => {
@@ -449,7 +492,12 @@ export function register(dola: ModHostApi): void {
     return res.ok ? { ok: true, text: res.text, modelId: state.sttModel } : res
   })
 
-  /** 听音 = 说话 → 本地转写 → 用软件里的 AI 设置回答。 */
+  /**
+   * 听音 = 说话 → 本地转写 → 带着最近几轮对话去问 AI → 念出回答。
+   *
+   * The history is what makes this feel like a companion rather than a command line:
+   * "那明天呢？" only makes sense if the previous turn is still in context.
+   */
   dola.ipc.handle('stt-ask', async (payload: unknown, opts: unknown) => {
     const res = await transcribePosted(payload, opts)
     if (!res.ok) return { ok: false, error: res.error }
@@ -460,69 +508,147 @@ export function register(dola: ModHostApi): void {
     if (!status.configured) {
       return { ok: true, heard, reply: '', text: '', error: '软件设置里还没有配置 AI，只能先给你转写结果' }
     }
+
+    const history = state.rememberChat ? memory.contextMessages() : []
     const chat = await dola.ai.chat([
-      { role: 'system', content: '你是一个桌面助手。用户在用语音和你说话，请用一到两句话简短回答，不要列表、不要标题。' },
+      { role: 'system', content: PET_SYSTEM_PROMPT },
+      ...history,
       { role: 'user', content: heard }
     ])
     if (!chat.ok) return { ok: true, heard, reply: '', text: '', error: chat.error ?? 'AI 没有返回内容' }
 
+    if (state.rememberChat) {
+      memory.push({ role: 'user', text: heard, source: 'voice' })
+      memory.push({ role: 'pet', text: chat.content, source: 'voice' })
+    }
+
     /*
-     * Speak the reply right away when voice output is on.
+     * Speak the reply right after it is shown.
      *
-     * It is intentionally not awaited for the response: synthesis takes a moment, and the
-     * text should appear as soon as the model has answered. The audio is delivered as a
-     * separate broadcast that the orb plays.
+     * Deliberately not awaited: synthesis takes a second or two, and the text should
+     * appear the moment the model answers. The audio arrives as a separate broadcast.
      */
-    if (state.speakReply && dola.tts.status().ready) {
-      void dola.tts
+    if (state.speakReply && tts.status().ready) {
+      void tts
         .speak(chat.content)
         .then((voice) => {
-          if (voice.ok) dola.ipc.broadcast('voice', { audio: voice.audio, text: voice.text })
-          else dola.ipc.broadcast('voice-error', { error: voice.error })
+          if (voice.ok) {
+            tts.cacheLast(voice.audio)
+            dola.ipc.broadcast('voice', { audio: voice.audio, text: voice.text })
+          } else {
+            dola.ipc.broadcast('voice-error', { error: voice.error })
+          }
         })
         .catch(() => undefined)
     }
     return { ok: true, heard, reply: chat.content, text: chat.content }
   })
 
-  /* ---- 朗读（本地 GPT-SoVITS） ---- */
+  /** 聊天按钮：带上下文的闲聊，不需要麦克风。 */
+  dola.ipc.handle('chat-ask', async (text: unknown) => {
+    const said = String(text ?? '').trim()
+    if (!said) return { ok: false, error: '没有要发送的内容' }
+    if (!dola.ai.status().configured) return { ok: false, error: '软件设置里还没有配置 AI' }
 
-  dola.ipc.handle('tts-status', () => dola.tts.status())
+    const history = state.rememberChat ? memory.contextMessages() : []
+    const chat = await dola.ai.chat([
+      { role: 'system', content: PET_SYSTEM_PROMPT },
+      ...history,
+      { role: 'user', content: said }
+    ])
+    if (!chat.ok) return { ok: false, error: chat.error ?? 'AI 没有返回内容' }
 
-  /** Speaks arbitrary text; the orb also calls this for the 朗读 button. */
-  dola.ipc.handle('tts-speak', async (text: unknown) => {
-    const res = await dola.tts.speak(String(text ?? ''))
-    return res
-  })
-
-  /** Replays the reference sample so the user can hear which voice is in use. */
-  dola.ipc.handle('tts-preview', async () => {
-    const status = dola.tts.status()
-    const sample = '你好，我是你的桌面伙伴。'
-    const res = await dola.tts.speak(sample)
-    return { ...res, ready: status.ready, reason: status.reason }
-  })
-
-  /**
-   * Hands the bundled reference clip to whoever needs an absolute path.
-   *
-   * GPT-SoVITS wants a real file path, and the plugin's install directory is replaced on
-   * every upgrade — so the sample is copied into the plugin's data dir once and reported
-   * from there. The settings UI uses this to pre-fill the field.
-   */
-  dola.ipc.handle('tts-default-ref', () => {
-    const bundled = join(dola.installDir, 'ref-voice.wav')
-    const stable = join(dola.dataDir, 'voice', 'ref.wav')
-    try {
-      if (!existsSync(bundled)) return { ok: false, path: null, error: '插件里没有自带参考音频' }
-      if (!existsSync(stable)) {
-        mkdirSync(join(dola.dataDir, 'voice'), { recursive: true })
-        cpSync(bundled, stable)
-      }
-      return { ok: true, path: stable }
-    } catch (e) {
-      return { ok: false, path: null, error: e instanceof Error ? e.message : '复制失败' }
+    if (state.rememberChat) {
+      memory.push({ role: 'user', text: said, source: 'chat' })
+      memory.push({ role: 'pet', text: chat.content, source: 'chat' })
     }
+    if (state.speakReply && tts.status().ready) {
+      void tts.speak(chat.content).then((voice) => {
+        if (voice.ok) dola.ipc.broadcast('voice', { audio: voice.audio, text: voice.text })
+      })
+    }
+    return { ok: true, reply: chat.content, text: chat.content }
+  })
+
+  /* ---- 对话记忆 ---- */
+
+  dola.ipc.handle('memory-get', () => ({
+    enabled: state.rememberChat,
+    turns: memory.all().map((t) => ({ role: t.role, text: t.text, at: t.at }))
+  }))
+
+  dola.ipc.handle('memory-clear', () => {
+    memory.clear()
+    return { ok: true }
+  })
+
+  dola.ipc.handle('set-remember-chat', (on: unknown) => {
+    state.rememberChat = Boolean(on)
+    save()
+    if (!state.rememberChat) memory.clear()
+    return { ok: true, rememberChat: state.rememberChat }
+  })
+
+  /* ---- 朗读（本地 GPT-SoVITS，配置在插件自己这里） ---- */
+
+  dola.ipc.handle('tts-status', () => tts.status())
+
+  dola.ipc.handle('tts-config', () => tts.getConfig())
+
+  dola.ipc.handle('tts-set-config', (patch: unknown) => {
+    if (!patch || typeof patch !== 'object') return { ok: false, error: '缺少配置' }
+    const p = patch as Partial<TtsConfig>
+    const next: Partial<TtsConfig> = {}
+    if (typeof p.enabled === 'boolean') next.enabled = p.enabled
+    if (typeof p.endpoint === 'string') next.endpoint = p.endpoint.trim()
+    if (typeof p.refAudio === 'string') next.refAudio = p.refAudio.trim()
+    if (typeof p.promptText === 'string') next.promptText = p.promptText
+    if (typeof p.promptLang === 'string') next.promptLang = p.promptLang
+    if (typeof p.textLang === 'string') next.textLang = p.textLang
+    if (typeof p.speed === 'number' && p.speed > 0.5 && p.speed < 2.5) next.speed = p.speed
+    state.tts = tts.setConfig(next)
+    save()
+    return { ok: true, config: state.tts, status: tts.status() }
+  })
+
+  /** Picks a reference clip through the host's file dialog. */
+  dola.ipc.handle('tts-pick-ref', async () => {
+    try {
+      const picked = await dola.dialog.pickFile('选择参考音频（3~10 秒，无背景音乐）', [
+        { name: '音频', extensions: ['wav', 'flac', 'ogg', 'mp3'] }
+      ])
+      if (!picked) return { ok: false, canceled: true }
+      state.tts = tts.setConfig({ refAudio: picked })
+      save()
+      return { ok: true, path: picked, preview: tts.previewRefAudio() }
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : '选择失败' }
+    }
+  })
+
+  /** Restores the clip that ships with the plugin (or copies it if missing). */
+  dola.ipc.handle('tts-reset-ref', () => {
+    const path = tts.installBundledReference()
+    if (!path) return { ok: false, error: '插件里没有自带参考音频' }
+    state.tts = tts.setConfig({ refAudio: path })
+    save()
+    return { ok: true, path, preview: tts.previewRefAudio() }
+  })
+
+  dola.ipc.handle('tts-preview-ref', () => ({ audio: tts.previewRefAudio() }))
+
+  /** Speaks a fixed line so the user can hear the configured voice. */
+  dola.ipc.handle('tts-test', async () => {
+    const sample = '你好，我是你的桌面伙伴。'
+    const res = await tts.speak(sample)
+    return { ...res, status: tts.status() }
+  })
+
+  /** Speaks arbitrary text (the 朗读 button and 识屏 results use this). */
+  dola.ipc.handle('tts-speak', async (text: unknown) => {
+    const res = await tts.speak(String(text ?? ''))
+    if (res.ok) tts.cacheLast(res.audio)
+    return res
   })
 
   dola.ipc.handle('set-speak-reply', (on: unknown) => {

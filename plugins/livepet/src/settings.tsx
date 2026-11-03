@@ -6,8 +6,8 @@
 // ---------------------------------------------------------------------------
 
 import { useEffect, useState } from 'react'
-import { Badge, Button, Icon, SettingRow, Slider, Switch, toast } from './host'
-import type { PetInfo, SttStatus, TtsStatus } from './host'
+import { Badge, Button, Icon, Select, SettingRow, Slider, Switch, TextInput, toast } from './host'
+import type { PetInfo, SttStatus, TtsConfig, TtsStatus, Turn } from './host'
 
 export function PetSettingsPage(): JSX.Element {
   const [info, setInfo] = useState<PetInfo | null>(null)
@@ -16,11 +16,21 @@ export function PetSettingsPage(): JSX.Element {
   const [downloading, setDownloading] = useState(false)
   const [progress, setProgress] = useState(0)
   const [tts, setTts] = useState<TtsStatus | null>(null)
+  const [cfg, setCfg] = useState<TtsConfig | null>(null)
+  const [endpoint, setEndpoint] = useState('')
   const [previewing, setPreviewing] = useState(false)
+  const [testResult, setTestResult] = useState<{ ok: boolean; text: string; error: string | null } | null>(null)
+  const [turns, setTurns] = useState<Turn[]>([])
+  const [turnCount, setTurnCount] = useState(0)
 
   const refresh = async (): Promise<void> => {
     try {
-      setInfo(await petApi.state())
+      const st = await petApi.state()
+      setInfo(st)
+      if (st.tts) {
+        setCfg(st.tts)
+        setEndpoint((prev) => prev || st.tts.endpoint)
+      }
     } catch {
       /* service not loaded yet */
     }
@@ -42,10 +52,22 @@ export function PetSettingsPage(): JSX.Element {
     }
   }
 
+  const refreshMemory = async (): Promise<void> => {
+    try {
+      const m = await petApi.memory()
+      setTurns(m.turns)
+      // a "turn" is what the user said, so count their side only
+      setTurnCount(m.turns.filter((t) => t.role === 'user').length)
+    } catch {
+      /* service not loaded yet */
+    }
+  }
+
   useEffect(() => {
     void refresh()
     void refreshStt()
     void refreshTts()
+    void refreshMemory()
     const off = window.api.mod.on('livepet', 'state-changed', () => void refresh())
     // download progress arrives as a broadcast, so the bar moves without polling
     const offProgress = window.api.mod.on('livepet', 'stt-progress', (payload) => {
@@ -57,6 +79,71 @@ export function PetSettingsPage(): JSX.Element {
       offProgress()
     }
   }, [])
+
+  /** Persists one voice setting and refreshes both the config and its readiness. */
+  const saveTts = async (patch: Partial<TtsConfig>): Promise<void> => {
+    try {
+      const res = await petApi.ttsSetConfig(patch)
+      if (res.ok && res.config) {
+        setCfg(res.config)
+        setEndpoint(res.config.endpoint)
+        setTts(res.status ?? null)
+      } else if (!res.ok) {
+        toast.error(res.error ?? '保存失败')
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '保存失败')
+    }
+  }
+
+  const pickRef = async (): Promise<void> => {
+    const res = await petApi.ttsPickRef()
+    if (res.canceled) return
+    if (!res.ok) {
+      toast.error(res.error ?? '选择失败')
+      return
+    }
+    toast.success('已更换参考音频')
+    await refresh()
+    await refreshTts()
+  }
+
+  const resetRef = async (): Promise<void> => {
+    const res = await petApi.ttsResetRef()
+    if (!res.ok) {
+      toast.error(res.error ?? '失败')
+      return
+    }
+    toast.success('已换回自带的参考音频')
+    await refresh()
+    await refreshTts()
+  }
+
+  const preview = async (): Promise<void> => {
+    setPreviewing(true)
+    setTestResult(null)
+    try {
+      const res = await petApi.ttsTest()
+      setTestResult(res)
+      if (!res.ok) {
+        toast.error(res.error ?? '试听失败')
+        return
+      }
+      if (res.audio) {
+        const audio = new Audio(res.audio)
+        void audio.play().catch(() => toast.error('播放被拒绝，请先点一下页面再试'))
+      }
+      await refreshTts()
+    } finally {
+      setPreviewing(false)
+    }
+  }
+
+  const clearMemory = async (): Promise<void> => {
+    await petApi.memoryClear()
+    await refreshMemory()
+    toast.success('对话记忆已清空')
+  }
 
   const downloadModel = async (): Promise<void> => {
     setDownloading(true)
@@ -71,25 +158,6 @@ export function PetSettingsPage(): JSX.Element {
       await refreshStt()
     } finally {
       setDownloading(false)
-    }
-  }
-
-  /** Speaks a fixed line so the user can hear the configured voice. */
-  const preview = async (): Promise<void> => {
-    setPreviewing(true)
-    try {
-      const res = await petApi.ttsPreview()
-      if (!res.ok) {
-        toast.error(res.error ?? '试听失败')
-        return
-      }
-      if (res.audio) {
-        const audio = new Audio(res.audio)
-        void audio.play().catch(() => toast.error('浏览器拒绝了播放，请先点一下页面'))
-      }
-    } finally {
-      setPreviewing(false)
-      await refreshTts()
     }
   }
 
@@ -251,46 +319,145 @@ export function PetSettingsPage(): JSX.Element {
         <Icon name="autoAi" size={20} /> 语音合成
       </h2>
       <p className="set-section-desc">
-        用你自己训练的 GPT-SoVITS 音色说话。文字在这台电脑上合成，不经过网络。
-        服务地址和参考音频都在「设置 → 语音合成」里配置，桌宠跟着用。
+        用你自己训练的 GPT-SoVITS 音色说话。文字只发给本机的服务，不经过网络。
+        这里的配置属于桌宠自己，主程序不需要知道。
       </p>
 
       <div className="set-card">
-        <SettingRow
-          title="朗读 AI 的回复"
-          desc={info?.speakReply ? '听音回答后会自动念出来' : '只显示文字，不出声'}
-        >
+        <SettingRow title="开启语音合成" desc={cfg?.enabled ? '桌宠会开口说话' : '已关闭，不合成任何音频'}>
+          <Switch checked={Boolean(cfg?.enabled)} onChange={(v) => void saveTts({ enabled: v })} />
+        </SettingRow>
+
+        <SettingRow title="朗读 AI 的回复" desc={info?.speakReply ? '回答后会自动念出来' : '只显示文字，不出声'}>
           <Switch
             checked={Boolean(info?.speakReply)}
             onChange={(v) => void petApi.setSpeakReply(v).then(() => refresh())}
           />
         </SettingRow>
 
-        <SettingRow
-          title="语音服务"
-          desc={tts?.ready ? '已就绪，可以试听' : tts?.configured ? tts.reason : '还没有配置'}
-        >
+        <SettingRow title="服务地址" desc="GPT-SoVITS 启动后显示的那个地址，含 /tts">
+          <div style={{ width: 320 }}>
+            <TextInput
+              value={endpoint}
+              onChange={(e) => setEndpoint(e.target.value)}
+              onBlur={() => void saveTts({ endpoint })}
+              placeholder="http://127.0.0.1:9880/tts"
+            />
+          </div>
+        </SettingRow>
+
+        <SettingRow title="参考音频" desc={cfg?.refAudio ? shortPath(cfg.refAudio) : '还没选择'}>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Button variant="tonal" size="sm" icon="folderData" onClick={() => void pickRef()}>
+              选择
+            </Button>
+            <Button variant="text" size="sm" icon="restore" onClick={() => void resetRef()}>
+              用自带的
+            </Button>
+          </div>
+        </SettingRow>
+
+        <SettingRow title="参考音频的语言" desc="这段音频说的是什么语言">
+          <div style={{ width: 150 }}>
+            <Select
+              value={cfg?.promptLang ?? 'ja'}
+              onChange={(v) => void saveTts({ promptLang: v })}
+              options={[
+                { value: 'zh', label: '中文' },
+                { value: 'ja', label: '日文' },
+                { value: 'en', label: '英文' },
+                { value: 'ko', label: '韩文' }
+              ]}
+            />
+          </div>
+        </SettingRow>
+
+        <SettingRow title="朗读语言" desc="要念的文字是什么语言">
+          <div style={{ width: 150 }}>
+            <Select
+              value={cfg?.textLang ?? 'zh'}
+              onChange={(v) => void saveTts({ textLang: v })}
+              options={[
+                { value: 'zh', label: '中文' },
+                { value: 'ja', label: '日文' },
+                { value: 'en', label: '英文' },
+                { value: 'auto', label: '自动' }
+              ]}
+            />
+          </div>
+        </SettingRow>
+
+        <SettingRow title="语速" desc={`${(cfg?.speed ?? 1).toFixed(2)}×`}>
+          <div style={{ width: 180 }}>
+            <Slider
+              value={Math.round((cfg?.speed ?? 1) * 100)}
+              min={70}
+              max={150}
+              step={5}
+              onChange={(v) => void saveTts({ speed: v / 100 })}
+            />
+          </div>
+        </SettingRow>
+
+        <SettingRow title="语音状态" desc={tts?.ready ? '已就绪，可以试听' : tts?.reason || '不可用'}>
           {tts?.ready ? (
             <Button variant="tonal" size="sm" icon="play" loading={previewing} onClick={() => void preview()}>
-              试听
+              试听合成
             </Button>
           ) : (
-            <Badge tone="warning">未配置</Badge>
+            <Badge tone="warning">未就绪</Badge>
           )}
         </SettingRow>
       </div>
 
-      {!tts?.ready && (
+      {testResult ? (
         <div className="set-card">
           <div className="tools-format">
             <div>
-              <div className="tools-format-title">怎么配语音</div>
-              <p className="tools-format-body">
-                到「设置 → 语音合成」填三样东西：<br />
-                1. <b>服务地址</b>：GPT-SoVITS 启动后显示的地址，默认 <code>http://127.0.0.1:9880/tts</code>；<br />
-                2. <b>参考音频</b>：一段 3~10 秒、你自己音色的 wav/flac；<br />
-                3. <b>参考音频的语言</b>：这段音频说的是中文还是日文。<br />
-                填完点「测试」确认能出声，再回来点「试听」。
+              <div className="tools-format-title">{testResult.ok ? '合成成功' : '合成失败'}</div>
+              <p className="tools-format-body" style={{ color: testResult.ok ? undefined : 'var(--md-error)' }}>
+                {testResult.ok ? `已生成：${testResult.text}` : testResult.error}
+              </p>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      <h2 className="set-section-title" style={{ marginTop: 28 }}>
+        <Icon name="history" size={20} /> 对话记忆
+      </h2>
+      <p className="set-section-desc">
+        记住最近聊过的几句，桌宠才不会每次说话都像第一次见你。历史存在插件自己的数据目录里。
+      </p>
+
+      <div className="set-card">
+        <SettingRow
+          title="记住对话"
+          desc={info?.rememberChat ? `正在记住最近 ${turnCount} 轮` : '每次都是单轮，不保留上下文'}
+        >
+          <Switch
+            checked={Boolean(info?.rememberChat)}
+            onChange={(v) => void petApi.setRememberChat(v).then(() => refreshMemory())}
+          />
+        </SettingRow>
+
+        <SettingRow title="清空记忆" desc="删掉已经记下的对话">
+          <Button variant="text" size="sm" icon="delete" onClick={() => void clearMemory()}>
+            清空
+          </Button>
+        </SettingRow>
+      </div>
+
+      {turns.length > 0 && (
+        <div className="set-card">
+          <div className="tools-format">
+            <div>
+              <div className="tools-format-title">最近说过的话</div>
+              <p className="tools-format-body" style={{ whiteSpace: 'pre-wrap' }}>
+                {turns
+                  .slice(-6)
+                  .map((t) => `${t.role === 'pet' ? '桌宠' : '你'}：${t.text.slice(0, 60)}`)
+                  .join('\n')}
               </p>
             </div>
           </div>
@@ -298,6 +465,12 @@ export function PetSettingsPage(): JSX.Element {
       )}
     </>
   )
+}
+
+/** Keeps a long Windows path readable in a settings row. */
+function shortPath(p: string): string {
+  if (p.length <= 46) return p
+  return `${p.slice(0, 20)}…${p.slice(-22)}`
 }
 
 /** Typed wrapper over the mod's main-process handlers. */
@@ -315,10 +488,33 @@ export const petApi = {
     window.api.mod.invoke<{ ok: boolean; modelId?: string; error?: string }>('livepet', 'stt-download', modelId),
   sttSetModel: (modelId: string) =>
     window.api.mod.invoke<{ ok: boolean; modelId?: string; error?: string }>('livepet', 'stt-set-model', modelId),
-  /* ---- 朗读 ---- */
+  /* ---- 朗读 / 语音合成（配置在插件自己这里） ---- */
   ttsStatus: () => window.api.mod.invoke<TtsStatus>('livepet', 'tts-status'),
-  ttsPreview: () =>
-    window.api.mod.invoke<{ ok: boolean; audio?: string; error?: string; reason?: string }>('livepet', 'tts-preview'),
+  ttsSetConfig: (patch: Partial<TtsConfig>) =>
+    window.api.mod.invoke<{ ok: boolean; config?: TtsConfig; status?: TtsStatus; error?: string }>(
+      'livepet',
+      'tts-set-config',
+      patch
+    ),
+  ttsPickRef: () =>
+    window.api.mod.invoke<{ ok: boolean; canceled?: boolean; path?: string; error?: string }>(
+      'livepet',
+      'tts-pick-ref'
+    ),
+  ttsResetRef: () => window.api.mod.invoke<{ ok: boolean; path?: string; error?: string }>('livepet', 'tts-reset-ref'),
+  ttsTest: () =>
+    window.api.mod.invoke<{ ok: boolean; audio?: string; text: string; error: string | null }>('livepet', 'tts-test'),
+  ttsSpeak: (text: string) =>
+    window.api.mod.invoke<{ ok: boolean; audio?: string; error?: string }>('livepet', 'tts-speak', text),
   setSpeakReply: (on: boolean) =>
-    window.api.mod.invoke<{ ok: boolean; speakReply: boolean }>('livepet', 'set-speak-reply', on)
+    window.api.mod.invoke<{ ok: boolean; speakReply: boolean }>('livepet', 'set-speak-reply', on),
+  /* ---- 对话记忆 ---- */
+  memory: () =>
+    window.api.mod.invoke<{ enabled: boolean; turns: Turn[] }>('livepet', 'memory-get'),
+  memoryClear: () => window.api.mod.invoke<{ ok: boolean }>('livepet', 'memory-clear'),
+  setRememberChat: (on: boolean) =>
+    window.api.mod.invoke<{ ok: boolean; rememberChat: boolean }>('livepet', 'set-remember-chat', on),
+  /* ---- 聊天（带上下文） ---- */
+  chatAsk: (text: string) =>
+    window.api.mod.invoke<{ ok: boolean; reply?: string; text?: string; error?: string }>('livepet', 'chat-ask', text)
 }
