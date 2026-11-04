@@ -24,6 +24,8 @@ interface PetState {
   modelFile: string
   /** window id while the pet is shown */
   windowId: string | null
+  /** whether the pet should be visible — survives a restart, unlike `windowId` */
+  shown: boolean
   scale: number
   alwaysOnTop: boolean
   /** whisper model id used by 听音 */
@@ -41,6 +43,7 @@ const DEFAULTS: PetState = {
   modelDir: '',
   modelFile: '',
   windowId: null,
+  shown: true,
   scale: 1,
   alwaysOnTop: true,
   sttModel: 'base-q5',
@@ -183,6 +186,36 @@ export function register(dola: ModHostApi): void {
     return { name, entry }
   }
 
+  /* ---- 悬浮球（声明在前面：开/关桌宠时要用它） ---- */
+
+  let orbWindow: string | null = null
+  let orbExpanded = false
+
+  const openOrb = async (): Promise<string> => {
+    if (orbWindow) return orbWindow
+    orbWindow = await dola.desktop.open({
+      modId: 'livepet',
+      page: 'orb.html',
+      // sized for the expanded row (grip + 4 buttons); the page keeps the disc centred
+      width: 240,
+      height: 60,
+      // the ball must be clickable, so no passthrough
+      ignoreMouse: false,
+      alwaysOnTop: true
+    })
+    // enforce the declared size: a reused window id can keep stale bounds, and DPI
+    // rounding can grow it
+    dola.desktop.setBounds(orbWindow, { width: 240, height: 60 })
+    return orbWindow
+  }
+
+  const closeOrb = (): void => {
+    if (orbWindow) {
+      dola.desktop.close(orbWindow)
+      orbWindow = null
+    }
+  }
+
   const openPet = async (): Promise<{ ok: boolean; windowId?: string; error?: string }> => {
     if (!state.modelFile) return { ok: false, error: '请先在设置里上传 Live2D 模型' }
     if (state.windowId) return { ok: true, windowId: state.windowId }
@@ -199,16 +232,29 @@ export function register(dola: ModHostApi): void {
       query: { model: modelPath, scale: String(state.scale) }
     })
     state.windowId = id
+    state.shown = true
     save()
+    // the orb is how the pet is operated, so it appears with the pet
+    await openOrb().catch(() => undefined)
+    dola.ipc.broadcast('state-changed', { showing: true })
     return { ok: true, windowId: id }
   }
 
+  /**
+   * Hides the pet AND its orb.
+   *
+   * The orb exists only to operate the pet; leaving it floating over the desktop with
+   * nothing to control is just clutter.
+   */
   const closePet = (): { ok: boolean } => {
     if (state.windowId) {
       dola.desktop.close(state.windowId)
       state.windowId = null
-      save()
     }
+    state.shown = false
+    save()
+    closeOrb()
+    dola.ipc.broadcast('state-changed', { showing: false })
     return { ok: true }
   }
 
@@ -307,33 +353,6 @@ export function register(dola: ModHostApi): void {
 
   /* ---- 悬浮球 ---- */
 
-  let orbWindow: string | null = null
-  let orbExpanded = false
-
-  const openOrb = async (): Promise<string> => {
-    if (orbWindow) return orbWindow
-    orbWindow = await dola.desktop.open({
-      modId: 'livepet',
-      page: 'orb.html',
-      // sized for the expanded row (grip + 4 buttons); the page keeps the disc centred
-      width: 240,
-      height: 60,
-      // the ball must be clickable, so no passthrough
-      ignoreMouse: false,
-      alwaysOnTop: true
-    })
-    // enforce the declared size: a reused window id can keep stale bounds, and DPI
-    // rounding can grow it
-    dola.desktop.setBounds(orbWindow, { width: 240, height: 60 })
-    return orbWindow
-  }
-
-  const closeOrb = (): void => {
-    if (orbWindow) {
-      dola.desktop.close(orbWindow)
-      orbWindow = null
-    }
-  }
 
   dola.ipc.handle('orb-show', async () => {
     if (orbWindow) return { ok: true }
@@ -660,10 +679,13 @@ export function register(dola: ModHostApi): void {
   /* ---- lifecycle ---- */
 
   dola.on('boot', async () => {
-    // the orb comes back with the pet, since it is how the pet is operated
-    void openOrb().catch(() => undefined)
-    // a pet that was open when the app closed comes back
+    /*
+     * The orb belongs to the pet: it is opened by `openPet`, and hidden by `closePet`.
+     * Booting with no model (or with the pet hidden) must therefore show neither —
+     * a floating orb with no character to control is just desktop clutter.
+     */
     if (!state.modelFile) return
+    if (!state.shown) return
     try {
       await openPet()
     } catch {
