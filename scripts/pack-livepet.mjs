@@ -40,6 +40,8 @@ const FILES = [
   ['dist/pet/index.js', 'pet.js'],
   ['orb.html', 'orb.html'],
   ['dist/orb/index.js', 'orb.js'],
+  ['panel.html', 'panel.html'],
+  ['dist/panel/index.js', 'panel.js'],
   ['cubismcore.min.js', 'cubismcore.min.js']
 ]
 
@@ -80,6 +82,8 @@ const entries = [
   'pet.js',
   'orb.html',
   'orb.js',
+  'panel.html',
+  'panel.js',
   'cubismcore.min.js',
   'ref-voice.wav',
   'stt'
@@ -92,5 +96,5 @@ const size = statSync(out).size
 console.log(`✔ livepet v${manifest.version}`)
 console.log(`  ${out}  (${(size / 1024 / 1024).toFixed(1)} MB)`)
 console.log(
-  '  根目录：dola-mod.json, index.js, main/, pet.html, pet.js, orb.html, orb.js, cubismcore.min.js, ref-voice.wav, stt/'
+  '  根目录：dola-mod.json, index.js, main/, pet.html, pet.js, orb.html, orb.js, panel.html, panel.js, cubismcore.min.js, ref-voice.wav, stt/'
 )

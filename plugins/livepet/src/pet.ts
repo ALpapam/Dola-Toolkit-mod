@@ -67,6 +67,43 @@ async function boot(): Promise<void> {
     report()
     setInterval(report, 1500)
     window.addEventListener('resize', report)
+
+    /*
+     * Dragging the character itself.
+     *
+     * The pet window is click-through until the pointer is over the character, so a drag
+     * here competes with the passthrough toggle. The rule that keeps both working:
+     * a press starts a *potential* drag, and only a real movement (more than a few
+     * pixels) turns it into one — a plain click still reaches the model.
+     */
+    let petDrag: { startX: number; startY: number; lastDx: number; lastDy: number; moved: boolean } | null = null
+
+    canvas.addEventListener('pointerdown', (e) => {
+      petDrag = { startX: e.screenX, startY: e.screenY, lastDx: 0, lastDy: 0, moved: false }
+      canvas.setPointerCapture(e.pointerId)
+    })
+
+    canvas.addEventListener('pointermove', (e) => {
+      if (!petDrag) return
+      const dx = e.screenX - petDrag.startX
+      const dy = e.screenY - petDrag.startY
+      if (Math.abs(dx) > 4 || Math.abs(dy) > 4) petDrag.moved = true
+      if (!petDrag.moved) return
+      // incremental deltas: `drag-both` translates from the CURRENT window positions
+      const stepX = dx - petDrag.lastDx
+      const stepY = dy - petDrag.lastDy
+      petDrag.lastDx = dx
+      petDrag.lastDy = dy
+      if (!stepX && !stepY) return
+      const api = (window as unknown as { api?: { mod?: { invoke: (...a: unknown[]) => Promise<unknown> } } }).api
+      void api?.mod?.invoke('livepet', 'drag-both', { dx: stepX, dy: stepY })
+    })
+
+    const endDrag = (): void => {
+      petDrag = null
+    }
+    canvas.addEventListener('pointerup', endDrag)
+    canvas.addEventListener('pointercancel', endDrag)
   } catch (e) {
     status.textContent = `模型加载失败：${e instanceof Error ? e.message : String(e)}`
     status.classList.add('error')

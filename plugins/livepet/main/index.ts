@@ -12,7 +12,7 @@ import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, write
 import { basename, dirname, extname, join, relative } from 'node:path'
 import type { ModHostApi } from '../../../src/main/modService'
 import { MODELS, SttEngine } from './stt'
-import { TTS_DEFAULTS, TtsEngine, type TtsConfig } from './tts'
+import { MIMO_VOICES, TTS_DEFAULTS, TtsEngine, type TtsConfig } from './tts'
 import { Memory } from './memory'
 
 interface PetState {
@@ -191,21 +191,32 @@ export function register(dola: ModHostApi): void {
   let orbWindow: string | null = null
   let orbExpanded = false
 
+  /**
+   * Orb window metrics.
+   *
+   * The window is LARGER than the visible capsule on purpose: the shadow is drawn by the
+   * page (`filter: drop-shadow`), and a shadow has nowhere to go if the window is exactly
+   * the capsule size — Windows then clips it into a hard black rectangle around the ball.
+   * `PAD` leaves room on every side for the blur to fade out.
+   */
+  const ORB_W = 310
+  const ORB_H = 76
+  const PAD = 8
+
   const openOrb = async (): Promise<string> => {
     if (orbWindow) return orbWindow
     orbWindow = await dola.desktop.open({
       modId: 'livepet',
       page: 'orb.html',
-      // sized for the expanded row (grip + 4 buttons); the page keeps the disc centred
-      width: 240,
-      height: 60,
+      width: ORB_W,
+      height: ORB_H,
       // the ball must be clickable, so no passthrough
       ignoreMouse: false,
       alwaysOnTop: true
     })
     // enforce the declared size: a reused window id can keep stale bounds, and DPI
     // rounding can grow it
-    dola.desktop.setBounds(orbWindow, { width: 240, height: 60 })
+    dola.desktop.setBounds(orbWindow, { width: ORB_W, height: ORB_H })
     return orbWindow
   }
 
@@ -388,6 +399,39 @@ export function register(dola: ModHostApi): void {
   })
 
   /**
+   * Moves the pet and the orb together.
+   *
+   * The two are separate windows, so "dragging the character" means translating both by
+   * the same delta. `dx`/`dy` are applied to the current positions rather than absolute
+   * coordinates, because the page only knows the pointer delta — the main process is the
+   * one that knows where the windows actually are.
+   */
+  dola.ipc.handle('drag-both', (delta: unknown) => {
+    if (!delta || typeof delta !== 'object') return { ok: false }
+    const d = delta as { dx?: number; dy?: number }
+    const dx = Math.round(Number(d.dx) || 0)
+    const dy = Math.round(Number(d.dy) || 0)
+    if (!dx && !dy) return { ok: true }
+
+    const all = dola.desktop.list()
+    for (const w of all) {
+      dola.desktop.setBounds(w.id, { x: w.bounds.x + dx, y: w.bounds.y + dy })
+    }
+    return { ok: true }
+  })
+
+  /** Where the pet and orb currently are — the anchor for a drag. */
+  dola.ipc.handle('drag-anchor', () => {
+    const all = dola.desktop.list()
+    const pet = all.find((w) => w.id === state.windowId)
+    const orb = all.find((w) => w.id === orbWindow)
+    return {
+      pet: pet ? pet.bounds : null,
+      orb: orb ? orb.bounds : null
+    }
+  })
+
+  /**
    * Grows / shrinks the orb window.
    *
    * The ball and the result panel share one window, so the page asks for a taller window
@@ -397,23 +441,92 @@ export function register(dola: ModHostApi): void {
   dola.ipc.handle('orb-resize', (spec: unknown) => {
     if (!orbWindow || !spec || typeof spec !== 'object') return { ok: false }
     const s = spec as { x?: number; y?: number; height?: number }
-    const height = Math.max(60, Math.min(720, Math.round(Number(s.height) || 60)))
+    const height = Math.max(ORB_H, Math.min(760, Math.round(Number(s.height) || ORB_H)))
     dola.desktop.setBounds(orbWindow, {
       ...(typeof s.x === 'number' ? { x: Math.round(s.x) } : {}),
       ...(typeof s.y === 'number' ? { y: Math.round(s.y) } : {}),
-      width: 240,
+      width: ORB_W,
       height
     })
     return { ok: true }
   })
 
-  dola.ipc.handle('orb-open-settings', () => {
-    // bring the main window forward and land on this plugin's settings page
-    const win = dola.windows.main()
-    if (win) {
-      win.show()
-      win.focus()
+  /** The page needs these numbers to lay the capsule out inside the padded window. */
+  dola.ipc.handle('orb-metrics', () => ({ width: ORB_W, height: ORB_H, pad: PAD }))
+
+  /* ---- 设置面板（独立窗口） ---- */
+
+  let settingsWindow: string | null = null
+
+  /**
+   * Opens the pet's settings as its OWN window next to the orb.
+   *
+   * Sending the user to 设置 → 工具 → 桌宠 → 设置 means leaving the desktop, finding the
+   * rail and scrolling to the plugin — far too much for "make it a bit bigger". This
+   * panel is focusable (unlike the pet) so its inputs receive the keyboard, and it closes
+   * itself back to the orb.
+   */
+  const openSettingsPanel = async (): Promise<string> => {
+    if (settingsWindow) {
+      dola.desktop.focus(settingsWindow)
+      return settingsWindow
     }
+    const orb = dola.desktop.list().find((w) => w.id === orbWindow)
+    // anchor it beside the orb; the host clamps the result into the work area
+    const width = 452
+    const height = 620
+    const x = orb ? Math.max(8, orb.bounds.x - width - 12) : undefined
+    const y = orb ? Math.max(8, orb.bounds.y - height + 60) : undefined
+
+    settingsWindow = await dola.desktop.open({
+      modId: 'livepet',
+      page: 'panel.html',
+      width,
+      height,
+      ...(x !== undefined ? { x } : {}),
+      ...(y !== undefined ? { y } : {}),
+      ignoreMouse: false,
+      alwaysOnTop: true,
+      focusable: true,
+      skipTaskbar: false,
+      resizable: false
+    })
+    dola.desktop.focus(settingsWindow)
+    return settingsWindow
+  }
+
+  const closeSettingsPanel = (): void => {
+    if (settingsWindow) {
+      dola.desktop.close(settingsWindow)
+      settingsWindow = null
+    }
+  }
+
+  dola.ipc.handle('orb-open-settings', async () => {
+    try {
+      await openSettingsPanel()
+      return { ok: true }
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : '打不开设置面板' }
+    }
+  })
+
+  dola.ipc.handle('panel-close', () => {
+    closeSettingsPanel()
+    return { ok: true }
+  })
+
+  dola.ipc.handle('panel-window', () =>
+    dola.desktop
+      .list()
+      .filter((w) => w.id === settingsWindow)
+      .map((w) => ({ id: w.id, bounds: w.bounds }))
+  )
+
+  dola.ipc.handle('panel-move', (pos: unknown) => {
+    if (!settingsWindow || !pos || typeof pos !== 'object') return { ok: false }
+    const p = pos as { x: number; y: number }
+    dola.desktop.setBounds(settingsWindow, { x: Math.round(p.x), y: Math.round(p.y) })
     return { ok: true }
   })
 
@@ -614,20 +727,38 @@ export function register(dola: ModHostApi): void {
 
   dola.ipc.handle('tts-config', () => tts.getConfig())
 
+  /** Preset voices MiMo accepts, so the panel does not hard-code the list. */
+  dola.ipc.handle('tts-voices', () => [...MIMO_VOICES])
+
   dola.ipc.handle('tts-set-config', (patch: unknown) => {
     if (!patch || typeof patch !== 'object') return { ok: false, error: '缺少配置' }
     const p = patch as Partial<TtsConfig>
     const next: Partial<TtsConfig> = {}
     if (typeof p.enabled === 'boolean') next.enabled = p.enabled
+    if (p.provider === 'local' || p.provider === 'mimo') next.provider = p.provider
+    if (typeof p.volume === 'number' && p.volume >= 0 && p.volume <= 1) next.volume = p.volume
+    if (typeof p.timeoutMs === 'number' && p.timeoutMs >= 5000) next.timeoutMs = p.timeoutMs
+
+    // local backend
     if (typeof p.endpoint === 'string') next.endpoint = p.endpoint.trim()
     if (typeof p.refAudio === 'string') next.refAudio = p.refAudio.trim()
     if (typeof p.promptText === 'string') next.promptText = p.promptText
     if (typeof p.promptLang === 'string') next.promptLang = p.promptLang
     if (typeof p.textLang === 'string') next.textLang = p.textLang
     if (typeof p.speed === 'number' && p.speed > 0.5 && p.speed < 2.5) next.speed = p.speed
+
+    // cloud (MiMo)
+    if (typeof p.mimoBaseUrl === 'string') next.mimoBaseUrl = p.mimoBaseUrl.trim()
+    if (typeof p.mimoApiKey === 'string') next.mimoApiKey = p.mimoApiKey.trim()
+    if (typeof p.mimoVoice === 'string') next.mimoVoice = p.mimoVoice.trim()
+    if (typeof p.mimoStyle === 'string') next.mimoStyle = p.mimoStyle
+    if (typeof p.mimoClone === 'boolean') next.mimoClone = p.mimoClone
+
     state.tts = tts.setConfig(next)
     save()
-    return { ok: true, config: state.tts, status: tts.status() }
+    // the orb needs the new gain immediately, not at the next合成
+    dola.ipc.broadcast('tts-changed', { volume: state.tts.volume, provider: state.tts.provider })
+    return { ok: true, config: state.tts, status: tts.status(), voices: MIMO_VOICES }
   })
 
   /** Picks a reference clip through the host's file dialog. */
@@ -694,6 +825,7 @@ export function register(dola: ModHostApi): void {
   })
 
   dola.on('quit', () => {
+    closeSettingsPanel()
     closeOrb()
     if (state.windowId) dola.desktop.close(state.windowId)
     state.windowId = null

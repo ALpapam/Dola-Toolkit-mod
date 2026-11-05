@@ -22,13 +22,29 @@
        * It is pinned to the TOP of the window and given an explicit height, because the
        * window grows downwards when the result panel opens. `inset: 0` would stretch the
        * capsule over the whole window instead of keeping it a 60px bar.
+       *
+       * No `box-shadow` here: the window is an opaque rectangle for the compositor, so a
+       * shadow that spills outside its bounds gets cut off and shows up as a black
+       * rectangular edge. `filter: drop-shadow()` is drawn *inside* the page instead, so
+       * it follows the capsule's real silhouette and is never clipped.
        */
+      /*
+       * The window is intentionally larger than the capsule (see ORB_W/PAD in the mod's
+       * main service), so the shadow has room to fade. These offsets keep the capsule
+       * centred inside that padded window.
+       */
+      :root {
+        --orb-w: 294px;
+        --pad: 8px;
+        --capsule-h: 60px;
+      }
+
       #orb {
         position: absolute;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 60px;
+        top: var(--pad);
+        left: var(--pad);
+        width: var(--orb-w);
+        height: var(--capsule-h);
         box-sizing: border-box;
         display: flex;
         align-items: center;
@@ -37,7 +53,7 @@
         padding: 6px;
         border-radius: 999px;
         background: rgb(28 26 34 / 88%);
-        box-shadow: 0 6px 22px rgb(0 0 0 / 45%);
+        filter: drop-shadow(0 3px 9px rgb(0 0 0 / 50%));
         transition: width 200ms cubic-bezier(0.2, 0, 0, 1);
       }
 
@@ -82,13 +98,13 @@
         50% { box-shadow: 0 0 0 7px rgb(214 62 78 / 0%); }
       }
 
-      /* the collapsed state is just the grip, so the orb stays out of the way */
+      /* the collapsed state is just the grip, centred in the padded window */
       body.collapsed #orb {
         width: 44px;
         height: 44px;
         border-radius: 50%;
         justify-content: center;
-        transform: translateX(calc((240px - 44px) / 2 - 6px));
+        transform: translateX(calc((var(--orb-w) - 44px) / 2));
       }
       body.collapsed .btn:not(#grip) {
         display: none;
@@ -98,8 +114,7 @@
         cursor: grab;
         background: transparent;
         color: #c77dff;
-      }
-      #grip:active {
+      }      #grip:active {
         cursor: grabbing;
       }
 
@@ -129,14 +144,14 @@
        */
       #panel {
         position: absolute;
-        left: 0;
-        width: 240px;
-        top: 60px;
+        left: var(--pad);
+        width: var(--orb-w);
+        top: calc(var(--pad) + var(--capsule-h) + 6px);
         box-sizing: border-box;
         padding: 10px 12px;
         border-radius: 14px;
         background: rgb(28 26 34 / 94%);
-        box-shadow: 0 8px 26px rgb(0 0 0 / 50%);
+        filter: drop-shadow(0 4px 12px rgb(0 0 0 / 45%));
         color: #f3e8ff;
         font-size: 12px;
         line-height: 1.55;
@@ -254,10 +269,11 @@
   </head>
   <body class="collapsed">
     <div id="orb">
-      <button class="btn" id="grip" title="拖动 / 展开">●</button>
+      <button class="btn" id="grip" title="拖动球 / 展开">●</button>
       <button class="btn" data-action="vision" title="识屏（VLM）">👁</button>
       <button class="btn" data-action="listen" title="听音（STT）">🎤</button>
       <button class="btn" data-action="chat" title="聊天（LLM）">💬</button>
+      <button class="btn" id="drag-both" title="按住拖动：球和桌宠一起移动">✥</button>
       <button class="btn" data-action="settings" title="设置">⚙</button>
     </div>
     <div id="hint"></div>

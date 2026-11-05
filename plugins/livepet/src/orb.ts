@@ -37,10 +37,12 @@ const micBtn = document.querySelector<HTMLButtonElement>('.btn[data-action="list
 const input = document.getElementById('chat-input') as HTMLInputElement
 const sendBtn = document.getElementById('chat-send') as HTMLButtonElement
 
-/** Window geometry the host keeps for us: the ball row plus room for the panel. */
-const BALL_H = 60
-const PANEL_W = 240
-const TALL_MAX = 620
+/** Window geometry, fetched from the service so the page never hard-codes it. */
+let BALL_H = 76
+let PANEL_W = 310
+let PAD = 8
+const CAPSULE_H = 60
+const TALL_MAX = 720
 
 function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
   return window.api!.mod.invoke<T>(MOD, channel, ...args)
@@ -93,6 +95,59 @@ grip.addEventListener('pointerup', async () => {
   }
 })
 
+/* ---- 连球带人拖动 ----
+ *
+ * The grip moves the ball only. This button moves the pet AND the ball together, which is
+ * what "拖一下我的桌宠" usually means: the character is where the user wants it, and the
+ * controls should follow rather than be left behind on the other side of the screen.
+ *
+ * The main process owns both window positions, so the page only reports the pointer delta
+ * and lets it translate every desktop window of this mod by the same amount.
+ */
+const dragBothBtn = document.getElementById('drag-both') as HTMLButtonElement | null
+
+let bothDrag: {
+  startX: number
+  startY: number
+  lastDx: number
+  lastDy: number
+  moved: boolean
+} | null = null
+
+dragBothBtn?.addEventListener('pointerdown', (e) => {
+  e.preventDefault()
+  e.stopPropagation()
+  dragBothBtn.setPointerCapture(e.pointerId)
+  bothDrag = { startX: e.screenX, startY: e.screenY, lastDx: 0, lastDy: 0, moved: false }
+})
+
+dragBothBtn?.addEventListener('pointermove', (e) => {
+  if (!bothDrag) return
+  const dx = e.screenX - bothDrag.startX
+  const dy = e.screenY - bothDrag.startY
+  if (Math.abs(dx) > 3 || Math.abs(dy) > 3) bothDrag.moved = true
+  if (!bothDrag.moved) return
+  /*
+   * Report only the increment since the last move.
+   *
+   * `drag-both` applies the delta to the CURRENT positions, so sending absolute distances
+   * from the start would accumulate: each event would re-apply the full offset.
+   */
+  const stepX = dx - bothDrag.lastDx
+  const stepY = dy - bothDrag.lastDy
+  bothDrag.lastDx = dx
+  bothDrag.lastDy = dy
+  if (!stepX && !stepY) return
+  void invoke('drag-both', { dx: stepX, dy: stepY })
+})
+
+dragBothBtn?.addEventListener('pointerup', () => {
+  const wasDrag = bothDrag?.moved
+  bothDrag = null
+  // a click (not a drag) is a no-op: dragging is the whole point of this button
+  if (!wasDrag) return
+})
+
 /* ---- result panel ---- */
 
 let panelOpen = false
@@ -128,9 +183,11 @@ async function showError(who: string, message: string, heard = ''): Promise<void
 /** Measured content height, clamped so a huge answer scrolls instead of covering the screen. */
 async function syncHeight(): Promise<void> {
   const tall = panelOpen
+  // the panel starts below the padded capsule; add that offset plus a little breathing room
+  const offset = PAD + CAPSULE_H + 6
   const content = tall ? Math.min(panel.scrollHeight + 18, TALL_MAX) : 0
   const b = await winBounds()
-  await setWindow(b.x, b.y, tall ? BALL_H + content : BALL_H)
+  await setWindow(b.x, b.y, tall ? offset + content : BALL_H)
 }
 
 async function closePanel(): Promise<void> {
@@ -155,6 +212,9 @@ window.api?.mod.on(MOD, 'stt-progress', (payload) => {
 
 /* ---- voice output ---- */
 
+/** Playback gain, mirrored from the plugin's tts config. */
+let volume = 1
+
 /** One shared player: a new line always interrupts the previous one. */
 let player: HTMLAudioElement | null = null
 
@@ -166,6 +226,7 @@ function playVoice(dataUrl: string): void {
   }
   player.pause()
   player.src = dataUrl
+  player.volume = Math.max(0, Math.min(1, volume))
   micBtn.classList.add('speaking')
   void player.play().catch(() => {
     // autoplay can be refused before the user interacts; not fatal
@@ -182,6 +243,22 @@ window.api?.mod.on(MOD, 'voice', (payload) => {
 window.api?.mod.on(MOD, 'voice-error', () => {
   micBtn.classList.remove('speaking')
 })
+
+/** The settings panel writes volume/provider here, so playback follows immediately. */
+window.api?.mod.on(MOD, 'tts-changed', (payload) => {
+  const p = payload as { volume?: number }
+  if (typeof p?.volume === 'number') volume = p.volume
+  if (player) player.volume = Math.max(0, Math.min(1, volume))
+})
+
+void (async () => {
+  try {
+    const cfg = await invoke<{ volume: number }>('tts-config')
+    if (typeof cfg?.volume === 'number') volume = cfg.volume
+  } catch {
+    /* keep the default */
+  }
+})()
 
 /* ---- recording ---- */
 
@@ -455,6 +532,19 @@ sendBtn.addEventListener('click', () => void sendChat())
 
 // the row starts collapsed; the host may ask it to remember the last state
 void (async () => {
+  try {
+    // geometry comes from the service so the page never disagrees with the real window
+    const m = await invoke<{ width: number; height: number; pad: number }>('orb-metrics')
+    if (m?.width) PANEL_W = m.width
+    if (m?.height) BALL_H = m.height
+    if (typeof m?.pad === 'number') {
+      PAD = m.pad
+      document.documentElement.style.setProperty('--pad', `${PAD}px`)
+      document.documentElement.style.setProperty('--orb-w', `${PANEL_W - PAD * 2}px`)
+    }
+  } catch {
+    /* keep the built-in defaults */
+  }
   try {
     const st = await invoke<{ expanded: boolean }>('orb-state')
     if (st?.expanded) body.classList.remove('collapsed')
