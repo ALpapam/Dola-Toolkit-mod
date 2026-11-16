@@ -1,0 +1,11 @@
+{
+  "id": "rvc",
+  "name": "音色转换",
+  "version": "1.0.0",
+  "settingsName": "音色转换设置",
+  "createdAt": "2026-11-14T00:00:00.000Z",
+  "description": "用 RVC 把一段音频换成另一个人的音色。\n\n· 可选按需分离人声/伴奏（BS-RoFormer、Mel-Band RoFormer Karaoke）\n· 可选择去混响/去回声（UVR-DeEcho-DeReverb）\n· 音色模型从本机已有的 RVC 安装里读取\n\n第一次使用请在「设置 → 工具 → 音色转换 → 设置」里指定 RVC 运行时目录。\n不含训练、音色融合与实时变声。",
+  "icon": "recordVoiceOver",
+  "settingsIcon": "tune",
+  "entry": "index.js"
+}
